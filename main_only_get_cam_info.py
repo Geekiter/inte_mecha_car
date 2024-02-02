@@ -935,7 +935,7 @@ current_target_id = target_id
 is_finished = False
 same_count = 0
 
-target_id_list = [11, 32, 21, 11]
+target_id_list = [21, 32, 21, 11]
 """
 action status: 
 locate: locate the object by the big tag.
@@ -944,7 +944,6 @@ finish: finish the task
 """
 target_action_list = ["locate", "grab", "locate", "finish"]
 target_index = 0
-grab_color = "red"
 
 
 def keepForward(sp):
@@ -991,9 +990,16 @@ def isSameXYZ(x, y, z):
 speed_floor = 30  # 地板上的速度
 speed_floor_rotate = 30  # 地板上的转向速度
 
-for _ in range(8):
-    openClaw()
-
+# openClaw()
+# openClaw()
+# openClaw()
+# openClaw()
+# openClaw()
+# openClaw()
+# openClaw()
+# openClaw()
+# openClaw()
+# openClaw()
 while True:
     RGB(0, 0, 0)
 
@@ -1038,90 +1044,15 @@ while True:
                                 -zoomfactor
                                 * float(parsed_values_list[indx].get("Ty", "N/A"))
                             )  # 计算y方向的距离
-                            color = parsed_values_list[indx].get("Color", "N/A")  # 获取颜色
-                            print(f"x={x_dis},y={y_dis},z={z_dis}, color={color}")  # 打印x, y, z方向的距离
+                            print(f"x={x_dis},y={y_dis},z={z_dis}")  # 打印x, y, z方向的距离
 
                             # 思路：
                             """
                             如果当前的方向不是正中间，则调整方向。调整完方向然后直行。
-                            """
-
-                            if z_dis >= 800:
-                                keepForward(speed_floor)
-                                print("go forward")
-                            elif 800 > z_dis > 250:
-                                if -35 > x_dis:
-                                    keepTurnLeft(speed_floor_rotate)
-                                    print("turn left")
-                                elif 80 < x_dis:
-                                    keepTurnRight(speed_floor_rotate)
-                                    print("turn right")
-                                else:
-                                    keepForward(speed_floor)
-                                    print("go forward")
-                            elif z_dis <= 250 and last_z <= 250:
-                                if target_action_list[target_index] == "locate":
-                                    target_index += 1
-                                    print(
-                                        f"change to target_id:{target_id_list[target_index]}"
-                                    )
-                                    stopMove()
-                                elif target_action_list[target_index] == "finish":
-                                    is_finished = True
-                                    stopMove()
-                                    print("car stopped")
-                                    break
-                                elif target_action_list[target_index] == "grab":
-                                    if color != grab_color:
-                                        # 如果当前抓取的颜色不是目标颜色，则将当前的action设置为locate，不去grab
-                                        target_action_list[target_index] = "locate"
-                                    elif x_dis < 38:
-                                        keepTurnLeft(speed_floor_rotate)
-                                        print("turn left")
-                                        utime.sleep(0.3)
-                                    elif x_dis > 48:
-                                        keepTurnRight(speed_floor_rotate)
-                                        print("turn right")
-                                        utime.sleep(0.3)
-                                    elif 38 <= x_dis <= 48:
-                                        stopMove()
-                                        print("car got there")
-
-                                        for _ in range(8):
-                                            keepForward(speed_floor)
-                                        for _ in range(6):
-                                            closeClaw()
-                                        for _ in range(3):
-                                            keepBackward(speed_floor)
-
-                                        target_index += 1
-                                        print(
-                                            f"change to target_id:{target_id_list[target_index]}"
-                                        )
-                                        print(
-                                            f"change action to {target_action_list[target_index]}"
-                                        )
-                                    else:
-                                        print("error")
-
+                           """
             except Exception as e:
-                print("Error parsing data:", e)
-
-                # print("car stopped")
-        if isSameXYZ(x_dis, y_dis, z_dis):
-            same_count += 1
-        else:
-            same_count = 0
-        if same_count > 30:
-            # 转向多次确认是否需要转向
-            keepTurnRight(30)
-            utime.sleep(0.3)
-            print("is same xyz")
-            same_count = 0
-        last_x = x_dis
-        last_y = y_dis
-        last_z = z_dis
-        if is_finished:
-            break
+                print("error", e)
+                continue
     except Exception as e:
-        print("Error data:", e)
+        print("error", e)
+        continue
