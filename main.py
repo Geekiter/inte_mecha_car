@@ -19,8 +19,8 @@ from motorPCA9685 import MotorDriver
 
 # config
 # import config
-wifiName = "WOW10086"
-wifiPassword = "chenkeyan"
+wifiName = "XXX"
+wifiPassword = "xxxxxx"
 
 # MQTT setting
 myTopic = "apriltagSize"
@@ -932,8 +932,13 @@ action_count = 9
 target_id = 21  # 设置目标ID为30
 second_target_id = 32
 current_target_id = target_id
-is_got_there = False
+is_finished = False
 same_count = 0
+
+target_id_list = [21, 32, 21, 11]
+target_action_list = ["locate", "grab", "locate", "finish"]
+target_index = 0
+
 
 def keepForward(sp):
     moveForwardSpd(sp)
@@ -974,7 +979,8 @@ def isSameXYZ(x, y, z):
         return True
     else:
         return False
-    
+
+
 speed_floor = 30  # 地板上的速度
 speed_floor_rotate = 30  # 地板上的转向速度
 
@@ -993,7 +999,6 @@ while True:
 
     count += 1
 
-
     try:
         if uart2.any():
             data = uart2.read().decode("utf-8").strip()  # 读取一个字节
@@ -1011,8 +1016,13 @@ while True:
                             parsed_values_list[i].get("id", "N/A")
                         )  # 从列表中获取id，如果没有则返回'N/A'，并将结果转换为整数
                         print(f"received id1:{received_id1}")
-                        print(f"current_target_id:{current_target_id}")
-                        if received_id1 == current_target_id:  # 如果接收到的id等于目标id
+                        print(f"current_target_id:{target_id_list[target_index]}")
+                        print(
+                            f"current_target_action:{target_action_list[target_index]}"
+                        )
+                        if (
+                            received_id1 == target_id_list[target_index]
+                        ):  # 如果接收到的id等于目标id
                             indx = i  # 记录当前的索引
                             received_id = received_id1  # 更新接收到的id
                             print(f"received id:{received_id}")  # 打印接收到的id
@@ -1039,60 +1049,87 @@ while True:
                                 keepForward(speed_floor)
                                 print("go forward")
                             elif 800 > z_dis > 250:
-                                if -70 > x_dis:
+                                if -35 > x_dis:
                                     keepTurnLeft(speed_floor_rotate)
                                     print("turn left")
-                                elif 60 < x_dis:
+                                elif 80 < x_dis:
                                     keepTurnRight(speed_floor_rotate)
                                     print("turn right")
                                 else:
                                     keepForward(speed_floor)
                                     print("go forward")
                             elif z_dis <= 250 and last_z <= 250:
-                                if current_target_id == target_id:
-                                    current_target_id = second_target_id
-                                    print("change target id")
+                                if target_action_list[target_index] == "locate":
+                                    target_index += 1
+                                    print(
+                                        f"change to target_id:{target_id_list[target_index]}"
+                                    )
                                     stopMove()
-                                elif current_target_id == second_target_id:
-                                    
+                                elif target_action_list[target_index] == "finish":
+                                    is_finished = True
                                     stopMove()
-                                    print("car got there")
-                                    keepForward(speed_floor)
-                                    keepForward(speed_floor)
-                                    keepForward(speed_floor)
-                                    keepForward(speed_floor)
-                                    keepForward(speed_floor)
-                                    keepForward(speed_floor)
-                                    keepForward(speed_floor)
-                                    keepForward(speed_floor)
+                                    print("car stopped")
+                                    break
+                                elif target_action_list[target_index] == "grab":
+                                    if x_dis < 38:
+                                        keepTurnLeft(speed_floor_rotate)
+                                        print("turn left")
+                                        utime.sleep(0.3)
+                                    elif x_dis > 48:
+                                        keepTurnRight(speed_floor_rotate)
+                                        print("turn right")
+                                        utime.sleep(0.3)
+                                    elif 38 <= x_dis <= 48:
+                                        stopMove()
+                                        print("car got there")
+                                        keepForward(speed_floor)
+                                        keepForward(speed_floor)
+                                        keepForward(speed_floor)
+                                        keepForward(speed_floor)
+                                        keepForward(speed_floor)
+                                        keepForward(speed_floor)
+                                        keepForward(speed_floor)
+                                        keepForward(speed_floor)
 
-                                    is_got_there = True
+                                        closeClaw()
+                                        closeClaw()
+                                        closeClaw()
+                                        closeClaw()
+                                        closeClaw()
+                                        closeClaw()
 
-                                    closeClaw()
-                                    closeClaw()
-                                    closeClaw()
-                                    closeClaw()
-                                    closeClaw()
-                                    closeClaw()
-                                
+                                        keepBackward(speed_floor)
+                                        keepBackward(speed_floor)
+                                        keepBackward(speed_floor)
+
+                                        target_index += 1
+                                        print(
+                                            f"change to target_id:{target_id_list[target_index]}"
+                                        )
+                                        print(
+                                            f"change action to {target_action_list[target_index]}"
+                                        )
+                                    else:
+                                        print("error")
 
             except Exception as e:
                 print("Error parsing data:", e)
 
                 # print("car stopped")
-        if isSameXYZ(x_dis, y_dis, z_dis) and not is_got_there:
+        if isSameXYZ(x_dis, y_dis, z_dis):
             same_count += 1
         else:
             same_count = 0
-        if same_count > 10:
+        if same_count > 30:
             # 转向多次确认是否需要转向
             keepTurnRight(30)
+            utime.sleep(0.3)
             print("is same xyz")
             same_count = 0
         last_x = x_dis
         last_y = y_dis
         last_z = z_dis
-        if is_got_there:
+        if is_finished:
             break
     except Exception as e:
         print("Error data:", e)
