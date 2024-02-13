@@ -51,7 +51,8 @@ f_y = (2.8 / 2.952) * 120  # find_apriltags 如果没有设置，则默认为这
 c_x = 160 * 0.5  # find_apriltags 如果没有设置，则默认为这个 (the image.w * 0.5)
 c_y = 120 * 0.5  # find_apriltags 如果没有设置，则默认为这个 (the image.h * 0.5)
 
-thresholds = [(72, 20, 127, 41, 56, 6)]
+thresholds = [(19, 94, 118, 22, -14, 60)]
+# [(72, 20, 127, 41, 56, 6)]
 # 蓝色盒子阈值 (23, 100, -128, -10, -40, -1)
 # 红色盒子阈值 (72, 20, 127, 41, 56, 6)
 
@@ -119,6 +120,9 @@ while True:
         urat_send_data["TagTx"] = tag.x_translation()
         urat_send_data["TagTy"] = tag.y_translation()
         urat_send_data["TagTz"] = tag.z_translation()
+        urat_send_data['TagCx'] = tag.cx()
+        urat_send_data['TagCy'] = tag.cy()
+
 
     urat_send_data_json = json.dumps(urat_send_data)
     print(urat_send_data_json)

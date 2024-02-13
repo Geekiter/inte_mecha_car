@@ -35,11 +35,14 @@ pwma.freq(1000)
 
 
 is_finished = False
-target_index = 0
+
 
 # ## grab claw
 maxGrabLevel = 70
 minGrabLevel = 30
+grabLastState = 2
+grabState = 0  # 0 unknown, 1, close, 2, open
+currentGrabLevel = 70
 
 # # ----------------- functions -----------------
 
@@ -102,21 +105,46 @@ def StopMotor():
 
 
 def openClaw():
+    global grabLastState
+    global grabState
+    global currentGrabLevel
     global maxGrabLevel
-    RotateBCCW(maxGrabLevel)
-    maxGrabLevel -= 2
+    global minGrabLevel
+
+    if grabLastState != 1:
+        currentGrabLevel = maxGrabLevel
+
+    else:
+        currentGrabLevel = max(currentGrabLevel - 10, minGrabLevel)
+
+    print(f"close Claw at {currentGrabLevel}")
+    RotateBCCW(currentGrabLevel)
     sleep(0.5)
     StopMotor()
     sleep(0.2)
+    grabLastState = 1
 
 
 def closeClaw():
+    global grabLastState
+    global grabState
+    global currentGrabLevel
     global maxGrabLevel
-    RotateBCW(maxGrabLevel)
-    maxGrabLevel -= 2
+    global minGrabLevel
+
+    if grabLastState != 2:
+        currentGrabLevel = maxGrabLevel
+
+    else:
+        currentGrabLevel = max(currentGrabLevel - 10, minGrabLevel)
+
+    print(f"open Claw at {currentGrabLevel}")
+
+    RotateBCW(currentGrabLevel)
     sleep(0.5)
     StopMotor()
     sleep(0.2)
+    grabLastState = 2
 
 
 def moveForwardSpd(speedpct1):
@@ -213,17 +241,20 @@ def keepBackward(sp):
     moveBackwardSpd(sp - 10)
     stopMove()
 
+
 # # ----------------- adjustable parameters -----------------
+target_index = 0
+target_id_list = ["", 11]
 
-target_id_list = [21, 32, 21, 11]
-
-target_action_list = ["locate", "grab", "locate", "finish"]
+target_action_list = ["grab-by-color", "put-down"]
 """
 action status: 
 
 - locate: locate the object by the big tag.
-- grab: grab the object
+- grab: grab the object by tag
 - finish: finish the task
+- grab-by-color: grab the object of the specific color
+- put-down: put down the object
 """
 
 grab_color = "red"
@@ -234,16 +265,21 @@ big_tag_id_list = [
     21,
 ]
 small_tag_id_list = [32, 11]
-small_tag_zoomfactor = 15 / 4
+small_tag_width = 5.1
+small_tag_zoomfactor = 19.5 * 2 / 12.5 / 5.1 * small_tag_width
 big_tag_zoomfactor = 78 / 6.6
 
-object_width = 6 # cm
+object_width = 6  # cm
 color_obj_zoomfactor = 19.5 * 2 * 27 / 6 * object_width
 
-k210_cam_offset = 95 - 160 / 2  # 相机安装在机械臂上的偏移量
-claw_range = (90 - 75) / 2 
-k210_center = 160 / 2 + k210_cam_offset
-rotate_in_front_of_obj = 2 # cm 在物体前方允许旋转的距离
+k210_cam_offset = 90 - 160 / 2  # 相机安装在机械臂上的偏移量
+claw_range = (90 - 75) / 2
+k210_qqvga = (120, 160)
+k210_center = k210_qqvga[1] / 2 + k210_cam_offset  # QQVGA分辨率：120*160
+k210_y_center = k210_qqvga[0] / 2
+arm_range = 20  # pixel 上下浮动范围
+rotate_in_front_of_obj = 2  # cm 在物体前方允许旋转的距离
+
 
 def get_zf(id):
     if id in big_tag_id_list:
@@ -256,10 +292,10 @@ claw_open_len = 14  # cm
 claw_close_len = 15
 
 claw_grab_len = 11
-claw_arm_up_len = 20 # 大于这个高度，需要抬起机械臂
+claw_arm_up_len = 20  # 大于这个高度，需要抬起机械臂
 grab_mode = False
-
-
+put_down_obj = False
+arm_up_len = 4
 # # ----------------- the life cycle of a job -----------------
 
 
@@ -290,12 +326,11 @@ if test_mode:
 # ## main
 for _ in range(10):
     armDown(10)
-    
+
 for _ in range(5):
     openClaw()
     # closeClaw()
     # pass
-
 
 
 # 判断当前应该前进还是后退，还是转弯，还是抓取
@@ -307,10 +342,18 @@ def get_action(cx, cy, w, h):
 
     # 如果obj_dis > rotate_in_front_of_obj + claw_open_len，说明物体在前方，调整角度
     if obj_dis > rotate_in_front_of_obj + claw_open_len:
-        if cx > k210_center + claw_range:
+        if cy < k210_y_center - arm_range:
+            print("view high is low, arm up")
+            armUp(25)
+            sleep(1)
+        elif cy > k210_y_center + arm_range:
+            print("view high is high, arm down")
+            armDown(10)
+            sleep(1)
+        elif cx > k210_center + claw_range:
             print("right")
             keepTurnRight(30)
-            
+
         # 如果cx小于k210_center - claw_range，说明物体在左边，左转
         elif cx < k210_center - claw_range:
             print("left")
@@ -326,7 +369,7 @@ def get_action(cx, cy, w, h):
                 is_finished = True
         else:
             grab_mode = True
-            if(h > claw_arm_up_len):
+            if h > claw_arm_up_len:
                 armUp(25)
                 sleep(1)
                 print("arm up, and h is: ", h)
@@ -335,47 +378,126 @@ def get_action(cx, cy, w, h):
                 # moveForwardSpd(30)
                 keepForward(30)
 
+
+def get_tag_action(tag_x, tag_y, tag_z):
+    global put_down_obj
+    global target_index
+    if tag_z > claw_close_len + arm_up_len:
+        if tag_y < k210_y_center - arm_range:
+            print("view high is low, arm up")
+            armUp(25)
+            sleep(1)
+        elif tag_y > k210_y_center + arm_range:
+            print("view high is high, arm down")
+            armDown(10)
+            sleep(1)
+        elif tag_x > k210_center + claw_range:
+            print("right")
+            keepTurnRight(30)
+        elif tag_x < k210_center - claw_range:
+            print("left")
+            keepTurnLeft(30)
+        else:
+            print("forward")
+            keepForward(30)
+    else:
+        for _ in range(30):
+            armUp(30)
+            sleep(0.3)
+
+        for _ in range(8):
+            keepForward(30)
+
+        for _ in range(3):
+            openClaw()
+
+        target_index+=1
+
+
 # 核心逻辑
 while is_finished is False and not test_mode:
     if uart2.any():
         # print(f"current target id is: {target_id_list[target_index]}")
-
-        
-
         try:
             uart2_data = uart2.read().decode("utf-8")
+            print(f"uart2_data: {uart2_data}")
+            # 查找}第一个出现的位置，然后截取字符串
+            json_end_index = uart2_data.find("}")
+            if json_end_index == -1:
+                continue
+            else:
+                uart2_data = uart2_data[: uart2_data.find("}") + 1]
             data = json.loads(uart2_data)
         except Exception as e:
-            print("urat2 data error")
+            print("urat2 data error", e)
             data = {}
-        tag_id = data.get("TagId", "N/A")
-        obj_status = data.get("ObjectStatus", "N/A")
+        if target_index < len(target_action_list):
+            print(f"current target action is: {target_action_list[target_index]}")
+        else:
+            print("target action list is empty")
+            break
 
-        obj_status = data.get("ObjectStatus", "N/A")
-        obj_w = int(data.get("ObjectWidth", "N/A")) if obj_status == "get" else 0
-        obj_h = int(data.get("ObjectHeight", "N/A")) if obj_status == "get" else 0
-        obj_x = int(data.get("ObjectX", "N/A")) if obj_status == "get" else 0
-        obj_y = int(data.get("ObjectY", "N/A")) if obj_status == "get" else 0
-        obj_cx = int(data.get("ObjectCX", "N/A")) if obj_status == "get" else 0
-        obj_cy = int(data.get("ObjectCY", "N/A")) if obj_status == "get" else 0
+        
+        if target_action_list[target_index] == "put-down":
+            tag_id = data.get("TagId", "N/A")
+            print(f"tag_id: {tag_id}")
+            if tag_id == target_id_list[target_index]:
+                zoomfactor = get_zf(tag_id)
+                print(f"received tag id:{tag_id}")
+                print(
+                    f"x: {data.get('TagTx', '999')}, y: {data.get('TagTy', '999')}, z: {data.get('TagTz', '999')}"
+                )
+                tag_z = int(-zoomfactor * float(data.get("TagTz", "999")))
+                tag_x = int(zoomfactor * float(data.get("TagTx", "999")))
+                tag_y = int(-zoomfactor * float(data.get("TagTy", "999")))
+                tag_cx = int(data.get("TagCx", "999"))
+                tag_cy = int(data.get("TagCy", "999"))
+                print(f"tag_z: {tag_z}, tag_cx: {tag_cx}, tag_cy: {tag_cy}")
+                get_tag_action(tag_cx, tag_cy, tag_z)
+            else:
+                keepTurnRight(30)
+                sleep(0.3)
+        elif target_action_list[target_index] == "grab-by-color":
+            obj_status = data.get("ObjectStatus", "N/A")
 
-        if tag_id == target_id_list[target_index]:
-            zoomfactor = get_zf(tag_id)
-            print(f"received tag id:{tag_id}")
-            tag_z = int(-zoomfactor * float(data.get("TagTz", "N/A")))
-            tag_x = int(zoomfactor * float(data.get("TagTx", "N/A")))
-            tag_y = int(-zoomfactor * float(data.get("TagTy", "N/A")))
-            print(f"tag_z: {tag_z}, tag_x: {tag_x}, tag_y: {tag_y}")
-        if obj_status == "get":
-            # print(
-            #     f"obj_status: {obj_status}, obj_w: {obj_w}, obj_h: {obj_h}, obj_x: {obj_x}, obj_y: {obj_y}, obj_cx: {obj_cx}, obj_cy: {obj_cy}"
-            # )
-            obj_dis = color_obj_zoomfactor / obj_w
-            print(f"obj_dis: {obj_dis}")
-            get_action(obj_cx, obj_cy, obj_w, obj_h)
-        if obj_status == "none" and grab_mode:
-            for _ in range(4):
-                closeClaw()
-            for _ in range(2):
-                armUp(30)
+            if obj_status == "get":
+                def get_obj_data(key):
+                    global data
+                    try:
+                        return int(data.get(key, 0) if obj_status == "get" else 0)
+                    except Exception as e:
+                        print("get obj data err:", e)
+                        print(data.get(key, 0))
+                        return 0
+                        
+                obj_w = get_obj_data("ObjectWidth")
+                obj_h = get_obj_data("ObjectHeight")
+                obj_x = get_obj_data("ObjectX")
+                obj_y = get_obj_data("ObjectY")
+                obj_cx = get_obj_data("ObjectCX")
+                obj_cy = get_obj_data("ObjectCY")
+                # print(
+                #     f"obj_status: {obj_status}, obj_w: {obj_w}, obj_h: {obj_h}, obj_x: {obj_x}, obj_y: {obj_y}, obj_cx: {obj_cx}, obj_cy: {obj_cy}"
+                # )
+                obj_dis = color_obj_zoomfactor / obj_w
+                print(f"obj_dis: {obj_dis}")
+                get_action(obj_cx, obj_cy, obj_w, obj_h)
+            if obj_status == "none":
+                if grab_mode:
+                    for _ in range(4):
+                        closeClaw()
+                    for _ in range(2):
+                        armUp(30)
+                    for _ in range(8):
+                        keepBackward(30)
+                    for _ in range(15):
+                        armDown(10)
+                    target_index+=1
+                else:
+                    keepTurnRight(30)
+                    sleep(0.3)
+
+                
+        elif target_action_list[target_index] == "finished":
             is_finished = True
+            break
