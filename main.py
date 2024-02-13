@@ -272,13 +272,13 @@ big_tag_zoomfactor = 78 / 6.6
 object_width = 6  # cm
 color_obj_zoomfactor = 19.5 * 2 * 27 / 6 * object_width
 
-k210_cam_offset = 90 - 160 / 2  # 相机安装在机械臂上的偏移量
+k210_cam_offset = 85 - 160 / 2  # 相机安装在机械臂上的偏移量
 claw_range = (90 - 75) / 2
 k210_qqvga = (120, 160)
 k210_center = k210_qqvga[1] / 2 + k210_cam_offset  # QQVGA分辨率：120*160
 k210_y_center = k210_qqvga[0] / 2
 arm_range = 20  # pixel 上下浮动范围
-rotate_in_front_of_obj = 2  # cm 在物体前方允许旋转的距离
+rotate_in_front_of_obj = 4  # cm 在物体前方允许旋转的距离
 
 
 def get_zf(id):
@@ -295,7 +295,7 @@ claw_grab_len = 11
 claw_arm_up_len = 20  # 大于这个高度，需要抬起机械臂
 grab_mode = False
 put_down_obj = False
-arm_up_len = 4
+arm_up_len = 2
 # # ----------------- the life cycle of a job -----------------
 
 
@@ -341,15 +341,15 @@ def get_action(cx, cy, w, h):
     # 如果cx大于k210_center + claw_range，说明物体在右边，右转
 
     # 如果obj_dis > rotate_in_front_of_obj + claw_open_len，说明物体在前方，调整角度
-    if obj_dis > rotate_in_front_of_obj + claw_open_len:
-        if cy < k210_y_center - arm_range:
-            print("view high is low, arm up")
+    if obj_dis > rotate_in_front_of_obj + claw_open_len and not grab_mode:
+        if cy < k210_y_center - 1.5 * arm_range:
+            print("view is low, arm up")
             armUp(25)
-            sleep(1)
-        elif cy > k210_y_center + arm_range:
-            print("view high is high, arm down")
+            sleep(0.3)
+        elif cy > k210_y_center + 1.5 * arm_range:
+            print("view is high, arm down")
             armDown(10)
-            sleep(1)
+            sleep(0.3)
         elif cx > k210_center + claw_range:
             print("right")
             keepTurnRight(30)
@@ -376,7 +376,8 @@ def get_action(cx, cy, w, h):
             else:
                 print("forward to grab")
                 # moveForwardSpd(30)
-                keepForward(30)
+                for _ in range(2):
+                    keepForward(25)
 
 
 def get_tag_action(tag_x, tag_y, tag_z):
@@ -386,11 +387,11 @@ def get_tag_action(tag_x, tag_y, tag_z):
         if tag_y < k210_y_center - arm_range:
             print("view high is low, arm up")
             armUp(25)
-            sleep(1)
+            sleep(0.3)
         elif tag_y > k210_y_center + arm_range:
             print("view high is high, arm down")
             armDown(10)
-            sleep(1)
+            sleep(0.3)
         elif tag_x > k210_center + claw_range:
             print("right")
             keepTurnRight(30)
@@ -401,15 +402,18 @@ def get_tag_action(tag_x, tag_y, tag_z):
             print("forward")
             keepForward(30)
     else:
-        for _ in range(30):
+        for _ in range(3):
             armUp(30)
             sleep(0.3)
 
-        for _ in range(8):
-            keepForward(30)
+        # for _ in range(8):
+        #     keepForward(30)
 
-        for _ in range(3):
+        for _ in range(4):
             openClaw()
+
+        for _ in range(8):
+            keepBackward(30)
 
         target_index+=1
 
@@ -484,14 +488,14 @@ while is_finished is False and not test_mode:
                 get_action(obj_cx, obj_cy, obj_w, obj_h)
             if obj_status == "none":
                 if grab_mode:
-                    for _ in range(4):
+                    for _ in range(5):
                         closeClaw()
-                    for _ in range(2):
+                    for _ in range(5):
                         armUp(30)
                     for _ in range(8):
                         keepBackward(30)
-                    for _ in range(15):
-                        armDown(10)
+                    # for _ in range(15):
+                    #     armDown(10)
                     target_index+=1
                 else:
                     keepTurnRight(30)
