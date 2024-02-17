@@ -244,9 +244,15 @@ def keepBackward(sp):
 
 # # ----------------- adjustable parameters -----------------
 target_index = 0
-target_id_list = ["", 11]
+target_id_list = ["", 11, "", 11, ""]
 
-target_action_list = ["grab-by-color", "put-down"]
+target_action_list = [
+    "grab-by-color",
+    "put-down",
+    "grab-by-color",
+    "put-down",
+    "finished",
+]
 """
 action status: 
 
@@ -271,6 +277,8 @@ big_tag_zoomfactor = 78 / 6.6
 
 object_width = 6  # cm
 color_obj_zoomfactor = 19.5 * 2 * 27 / 6 * object_width
+object_height = 8  # cm
+color_obj_zoomfactor_h = 19.5 * 2 * 36 / 8 * object_width
 
 k210_cam_offset = 85 - 160 / 2  # 相机安装在机械臂上的偏移量
 claw_range = (90 - 75) / 2
@@ -278,7 +286,7 @@ k210_qqvga = (120, 160)
 k210_center = k210_qqvga[1] / 2 + k210_cam_offset  # QQVGA分辨率：120*160
 k210_y_center = k210_qqvga[0] / 2
 arm_range = 20  # pixel 上下浮动范围
-rotate_in_front_of_obj = 4  # cm 在物体前方允许旋转的距离
+rotate_in_front_of_obj = 1  # cm 在物体前方允许旋转的距离
 
 
 def get_zf(id):
@@ -327,7 +335,7 @@ if test_mode:
 for _ in range(10):
     armDown(10)
 
-for _ in range(5):
+for _ in range(8):
     openClaw()
     # closeClaw()
     # pass
@@ -337,11 +345,15 @@ for _ in range(5):
 def get_action(cx, cy, w, h):
     global is_finished
     global grab_mode
-    obj_dis = color_obj_zoomfactor / w
+    obj_dis_w = color_obj_zoomfactor / w
+    obj_dis = color_obj_zoomfactor_h / h
+    print(f"obj_dis: {obj_dis}")
     # 如果cx大于k210_center + claw_range，说明物体在右边，右转
 
     # 如果obj_dis > rotate_in_front_of_obj + claw_open_len，说明物体在前方，调整角度
-    if obj_dis > rotate_in_front_of_obj + claw_open_len and not grab_mode:
+    if (obj_dis > rotate_in_front_of_obj + claw_open_len and not grab_mode) or (
+        obj_dis_w > rotate_in_front_of_obj + claw_open_len and not grab_mode
+    ):
         if cy < k210_y_center - 1.5 * arm_range:
             print("view is low, arm up")
             armUp(25)
@@ -362,22 +374,33 @@ def get_action(cx, cy, w, h):
             print("forward")
             keepForward(30)
     else:
-        if obj_dis < claw_grab_len:
-            print("grab")
-            for _ in range(6):
-                closeClaw()
-                is_finished = True
+        grab_mode = True
+        if h > claw_arm_up_len:
+            armUp(25)
+            sleep(1)
+            print("arm up, and h is: ", h)
         else:
-            grab_mode = True
-            if h > claw_arm_up_len:
-                armUp(25)
-                sleep(1)
-                print("arm up, and h is: ", h)
-            else:
-                print("forward to grab")
-                # moveForwardSpd(30)
-                for _ in range(2):
-                    keepForward(25)
+            print("forward to grab")
+            # moveForwardSpd(30)
+            for _ in range(2):
+                keepForward(25)
+                sleep(0.3)
+        # if obj_dis < claw_grab_len:
+        #     print("grab")
+        #     for _ in range(6):
+        #         closeClaw()
+        #         # is_finished = True
+        # else:
+        #     grab_mode = True
+        #     if h > claw_arm_up_len:
+        #         armUp(25)
+        #         sleep(1)
+        #         print("arm up, and h is: ", h)
+        #     else:
+        #         print("forward to grab")
+        #         # moveForwardSpd(30)
+        #         for _ in range(2):
+        #             keepForward(25)
 
 
 def get_tag_action(tag_x, tag_y, tag_z):
@@ -412,10 +435,14 @@ def get_tag_action(tag_x, tag_y, tag_z):
         for _ in range(4):
             openClaw()
 
-        for _ in range(8):
+        for _ in range(10):
             keepBackward(30)
 
-        target_index+=1
+        for _ in range(10):
+            armDown(10)
+            sleep(0.3)
+
+        target_index += 1
 
 
 # 核心逻辑
@@ -441,7 +468,6 @@ while is_finished is False and not test_mode:
             print("target action list is empty")
             break
 
-        
         if target_action_list[target_index] == "put-down":
             tag_id = data.get("TagId", "N/A")
             print(f"tag_id: {tag_id}")
@@ -465,6 +491,7 @@ while is_finished is False and not test_mode:
             obj_status = data.get("ObjectStatus", "N/A")
 
             if obj_status == "get":
+
                 def get_obj_data(key):
                     global data
                     try:
@@ -473,7 +500,7 @@ while is_finished is False and not test_mode:
                         print("get obj data err:", e)
                         print(data.get(key, 0))
                         return 0
-                        
+
                 obj_w = get_obj_data("ObjectWidth")
                 obj_h = get_obj_data("ObjectHeight")
                 obj_x = get_obj_data("ObjectX")
@@ -483,8 +510,7 @@ while is_finished is False and not test_mode:
                 # print(
                 #     f"obj_status: {obj_status}, obj_w: {obj_w}, obj_h: {obj_h}, obj_x: {obj_x}, obj_y: {obj_y}, obj_cx: {obj_cx}, obj_cy: {obj_cy}"
                 # )
-                obj_dis = color_obj_zoomfactor / obj_w
-                print(f"obj_dis: {obj_dis}")
+
                 get_action(obj_cx, obj_cy, obj_w, obj_h)
             if obj_status == "none":
                 if grab_mode:
@@ -496,12 +522,12 @@ while is_finished is False and not test_mode:
                         keepBackward(30)
                     # for _ in range(15):
                     #     armDown(10)
-                    target_index+=1
+                    target_index += 1
+                    grab_mode = False
                 else:
                     keepTurnRight(30)
                     sleep(0.3)
 
-                
         elif target_action_list[target_index] == "finished":
             is_finished = True
             break
