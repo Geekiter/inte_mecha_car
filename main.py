@@ -11,6 +11,7 @@ import neopixel
 import random
 import machine
 from utime import sleep
+import math
 
 # http server
 from micropyserver import MicroPyServer
@@ -247,7 +248,7 @@ target_index = 0
 target_id_list = ["", 11, "", 11, ""]
 
 target_action_list = [
-    "grab-by-color",
+    "grab-by-kpu",
     "put-down",
     "grab-by-color",
     "put-down",
@@ -261,6 +262,7 @@ action status:
 - finish: finish the task
 - grab-by-color: grab the object of the specific color
 - put-down: put down the object
+- grab-by-kpu: grab the object by kpu
 """
 
 grab_color = "red"
@@ -283,10 +285,16 @@ color_obj_zoomfactor_h = 19.5 * 2 * 36 / 8 * object_width
 k210_cam_offset = 85 - 160 / 2  # 相机安装在机械臂上的偏移量
 claw_range = (90 - 75) / 2
 k210_qqvga = (120, 160)
-k210_center = k210_qqvga[1] / 2 + k210_cam_offset  # QQVGA分辨率：120*160
+k210_qvga = (240, 320)
+k210_center = k210_qvga[1] / 2 + k210_cam_offset  # QQVGA分辨率：120*160
 k210_y_center = k210_qqvga[0] / 2
 arm_range = 20  # pixel 上下浮动范围
-rotate_in_front_of_obj = 1  # cm 在物体前方允许旋转的距离
+rotate_in_front_of_obj = 2  # cm 在物体前方允许旋转的距离
+
+duck_width = 4.5
+duck_height = 4.2
+duck_width_zoomfactor = 77 * 13.5 / 4.5 * duck_width
+duck_height_zoomfactor = 84 * 13.5 / 4.2 * duck_height
 
 
 def get_zf(id):
@@ -296,8 +304,8 @@ def get_zf(id):
         return small_tag_zoomfactor
 
 
-claw_open_len = 14  # cm
-claw_close_len = 15
+claw_open_len = 13.5  # cm
+claw_close_len = 14
 
 claw_grab_len = 11
 claw_arm_up_len = 20  # 大于这个高度，需要抬起机械臂
@@ -385,22 +393,6 @@ def get_action(cx, cy, w, h):
             for _ in range(2):
                 keepForward(25)
                 sleep(0.3)
-        # if obj_dis < claw_grab_len:
-        #     print("grab")
-        #     for _ in range(6):
-        #         closeClaw()
-        #         # is_finished = True
-        # else:
-        #     grab_mode = True
-        #     if h > claw_arm_up_len:
-        #         armUp(25)
-        #         sleep(1)
-        #         print("arm up, and h is: ", h)
-        #     else:
-        #         print("forward to grab")
-        #         # moveForwardSpd(30)
-        #         for _ in range(2):
-        #             keepForward(25)
 
 
 def get_tag_action(tag_x, tag_y, tag_z):
@@ -445,6 +437,54 @@ def get_tag_action(tag_x, tag_y, tag_z):
         target_index += 1
 
 
+def get_duck_action(x, y, w, h):
+    global grab_mode
+    cx = x + w / 2
+    cy = y + h / 2
+    dis_w = duck_width_zoomfactor / w
+    dis_h = duck_height_zoomfactor / h
+    print(f"dis_h: {dis_h}")
+    print(f"dis_w: {dis_w}")
+
+    obj_dis = max(dis_w, dis_h)
+    print(f"obj_dis: {obj_dis}")
+    # 如果cx大于k210_center + claw_range，说明物体在右边，右转
+
+    # 如果obj_dis > rotate_in_front_of_obj + claw_open_len，说明物体在前方，调整角度
+    if obj_dis > rotate_in_front_of_obj + claw_open_len and not grab_mode:
+        if cy < k210_y_center - 1.5 * arm_range:
+            print("view is low, arm up")
+            armUp(25)
+            sleep(0.3)
+        elif cy > k210_y_center + 1.5 * arm_range:
+            print("view is high, arm down")
+            armDown(10)
+            sleep(0.3)
+        elif cx > k210_center + claw_range:
+            print("right")
+            keepTurnRight(30)
+
+        # 如果cx小于k210_center - claw_range，说明物体在左边，左转
+        elif cx < k210_center - claw_range:
+            print("left")
+            keepTurnLeft(30)
+        else:
+            print("forward")
+            keepForward(30)
+    else:
+        grab_mode = True
+        if h > claw_arm_up_len:
+            armUp(25)
+            sleep(1)
+            print("arm up, and h is: ", h)
+        else:
+            print("forward to grab")
+            # moveForwardSpd(30)
+            for _ in range(2):
+                keepForward(25)
+                sleep(0.3)
+
+
 # 核心逻辑
 while is_finished is False and not test_mode:
     if uart2.any():
@@ -467,6 +507,15 @@ while is_finished is False and not test_mode:
         else:
             print("target action list is empty")
             break
+
+        def get_obj_data(key):
+            global data
+            try:
+                return int(data.get(key, 0) if obj_status == "get" else 0)
+            except Exception as e:
+                print("get obj data err:", e)
+                print(data.get(key, 0))
+                return 0
 
         if target_action_list[target_index] == "put-down":
             tag_id = data.get("TagId", "N/A")
@@ -492,15 +541,6 @@ while is_finished is False and not test_mode:
 
             if obj_status == "get":
 
-                def get_obj_data(key):
-                    global data
-                    try:
-                        return int(data.get(key, 0) if obj_status == "get" else 0)
-                    except Exception as e:
-                        print("get obj data err:", e)
-                        print(data.get(key, 0))
-                        return 0
-
                 obj_w = get_obj_data("ObjectWidth")
                 obj_h = get_obj_data("ObjectHeight")
                 obj_x = get_obj_data("ObjectX")
@@ -514,7 +554,37 @@ while is_finished is False and not test_mode:
                 get_action(obj_cx, obj_cy, obj_w, obj_h)
             if obj_status == "none":
                 if grab_mode:
+                    for _ in range(6):
+                        closeClaw()
                     for _ in range(5):
+                        armUp(30)
+                    for _ in range(8):
+                        keepBackward(30)
+                    # for _ in range(15):
+                    #     armDown(10)
+                    target_index += 1
+                    grab_mode = False
+                else:
+                    keepTurnRight(30)
+                    sleep(0.3)
+        elif target_action_list[target_index] == "grab-by-kpu":
+            obj_status = data.get("DuckStatus", "N/A")
+
+            if obj_status == "get":
+                obj_w = get_obj_data("DuckWidth")
+                obj_h = get_obj_data("DuckHeight")
+                obj_x = get_obj_data("DuckX")
+                obj_y = get_obj_data("DuckY")
+
+                get_duck_action(obj_x, obj_y, obj_w, obj_h)
+            if obj_status == "none":
+                if grab_mode:
+                    print("forward to grab")
+                    # moveForwardSpd(30)
+                    for _ in range(8):
+                        keepForward(30)
+                        sleep(0.1)
+                    for _ in range(8):
                         closeClaw()
                     for _ in range(5):
                         armUp(30)
