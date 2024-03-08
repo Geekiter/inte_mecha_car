@@ -246,7 +246,7 @@ def keepBackward(sp):
 # # ----------------- adjustable parameters -----------------
 target_index = 0
 target_id_list = ["", 11, "", 11, ""]
-
+target_img_mode = ["kpu", "find_apriltags", "find_blobs", "find_apriltags", ""]
 target_action_list = [
     "grab-by-kpu",
     "put-down",
@@ -287,7 +287,7 @@ claw_range = (90 - 75) / 2
 k210_qqvga = (120, 160)
 k210_qvga = (240, 320)
 k210_center = k210_qvga[1] / 2 + k210_cam_offset  # QQVGA分辨率：120*160
-k210_y_center = k210_qqvga[0] / 2
+k210_y_center = k210_qvga[0] / 2
 arm_range = 20  # pixel 上下浮动范围
 rotate_in_front_of_obj = 2  # cm 在物体前方允许旋转的距离
 
@@ -308,7 +308,7 @@ claw_open_len = 13.5  # cm
 claw_close_len = 14
 
 claw_grab_len = 11
-claw_arm_up_len = 20  # 大于这个高度，需要抬起机械臂
+claw_arm_up_len = 25  # 大于这个高度，需要抬起机械臂
 grab_mode = False
 put_down_obj = False
 arm_up_len = 2
@@ -470,23 +470,27 @@ def get_duck_action(x, y, w, h):
             keepTurnLeft(30)
         else:
             print("forward")
-            keepForward(30)
+            keepForward(40)
+            sleep(0.1)
     else:
         grab_mode = True
         if h > claw_arm_up_len:
-            armUp(25)
-            sleep(1)
+            armUp(35)
+            sleep(0.5)
             print("arm up, and h is: ", h)
         else:
             print("forward to grab")
             # moveForwardSpd(30)
-            for _ in range(2):
+            for _ in range(6):
                 keepForward(25)
                 sleep(0.3)
 
 
 # 核心逻辑
 while is_finished is False and not test_mode:
+    # uart2.write("the count of pico w is " + str(count) + "\n")
+    uart_write_dict = {"img_mode": target_img_mode[target_index]}
+    uart2.write(json.dumps(uart_write_dict) + "\n")
     if uart2.any():
         # print(f"current target id is: {target_id_list[target_index]}")
         try:
@@ -538,7 +542,6 @@ while is_finished is False and not test_mode:
                 sleep(0.3)
         elif target_action_list[target_index] == "grab-by-color":
             obj_status = data.get("ObjectStatus", "N/A")
-
             if obj_status == "get":
 
                 obj_w = get_obj_data("ObjectWidth")
@@ -569,7 +572,6 @@ while is_finished is False and not test_mode:
                     sleep(0.3)
         elif target_action_list[target_index] == "grab-by-kpu":
             obj_status = data.get("DuckStatus", "N/A")
-
             if obj_status == "get":
                 obj_w = get_obj_data("DuckWidth")
                 obj_h = get_obj_data("DuckHeight")
@@ -586,7 +588,7 @@ while is_finished is False and not test_mode:
                         sleep(0.1)
                     for _ in range(8):
                         closeClaw()
-                    for _ in range(5):
+                    for _ in range(8):
                         armUp(30)
                     for _ in range(8):
                         keepBackward(30)

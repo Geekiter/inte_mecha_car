@@ -6,7 +6,7 @@ import gc, sys
 from fpioa_manager import fm
 from machine import UART, Timer
 import json
-from Maix import GPIO
+from Maix import GPIO, utils
 from fpioa_manager import fm
 
 input_size = (224, 224)
@@ -98,23 +98,30 @@ def main(
         lcd.display(img)
 
     uart = init_uart()
-    urat_send_data = {}
+    uart_send_data = {}
+    uart_json = {}
     task = None
     try:
 
         while True:
-            #try:
-                #read_data = uart.readline(1)
-                #if read_data:
-                    #read_str = read_data.decode("utf-8")
-                #print(read_str)
-                #urat_json = json.loads(read_str)
-                #if "img_mode" in urat_json:
-                    #img_mode = urat_json["img_mode"]
-                    #print("uart img_mode:", img_mode)
-            #except Exception as e:
-                #print(e)
-                #urat_json = {}
+            print("gc heap size: ",utils.gc_heap_size())
+            print("current mode: ", img_mode)
+            try:
+                read_data = uart.read(256)
+                if read_data:
+                    read_str = read_data.decode("utf-8")
+                    # 查找{和}第一个出现的位置，然后截取字符串
+                    if "{" in read_str and "}" in read_str:
+                        read_str = read_str[read_str.index("{") : read_str.index("}") + 1]
+                        print("read_str:", read_str)
+                        uart_json = json.loads(read_str)
+
+                if "img_mode" in uart_json:
+                    img_mode = uart_json["img_mode"]
+                    print("uart img_mode:", img_mode)
+            except Exception as e:
+                print(e)
+                uart_json = {}
 
 
 
@@ -132,9 +139,6 @@ def main(
 
             blobs = None
 
-
-
-
             if img_mode == "kpu":
                 if task is None:
                     task = kpu.load(model_addr)
@@ -148,13 +152,13 @@ def main(
                         pos = obj.rect()
                         print(pos[0], pos[1], pos[2], pos[3])
                         if labels[obj.classid()] == "duck":
-                            urat_send_data['DuckStatus'] = "get"
-                            urat_send_data['DuckX'] = pos[0]
-                            urat_send_data['DuckY'] = pos[1]
-                            urat_send_data['DuckWidth'] = pos[2]
-                            urat_send_data['DuckHeight'] = pos[3]
+                            uart_send_data['DuckStatus'] = "get"
+                            uart_send_data['DuckX'] = pos[0]
+                            uart_send_data['DuckY'] = pos[1]
+                            uart_send_data['DuckWidth'] = pos[2]
+                            uart_send_data['DuckHeight'] = pos[3]
                         else:
-                            urat_send_data['DuckStatus'] = "none"
+                            uart_send_data['DuckStatus'] = "none"
                         img.draw_rectangle(pos, color=(0, 255, 255))
                         img.draw_string(
                             pos[0],
@@ -164,17 +168,20 @@ def main(
                             color=(255, 0, 0),
                         )
                 else:
-                    urat_send_data['DuckStatus'] = "none"
+                    uart_send_data['DuckStatus'] = "none"
                 #kpu.deinit(task)
                 #img.draw_string(0, 200, "t:%dms" % (t), scale=2, color=(255, 0, 0))
             elif img_mode == "find_blobs":
                 if task is not None:
                     kpu.deinit(task)
+                    del task
+                    gc.collect()
+                    task = None
                 # color_status = "none"
                 # object_info = "none"
-                # urat_send_data["ObjectWidth"] = 0
-                # urat_send_data["ObjectHeight"] = 0
-                # urat_send_data["ObjectStatus"] = color_status
+                # uart_send_data["ObjectWidth"] = 0
+                # uart_send_data["ObjectHeight"] = 0
+                # uart_send_data["ObjectStatus"] = color_status
                 img = sensor.snapshot()
                 blobs = img.find_blobs([thresholds[0]], pixels_threshold=100)
                 if blobs:
@@ -190,21 +197,26 @@ def main(
                         blobs[b_index].x() + int(object_info[2] / 2),
                         blobs[b_index].y() + int(object_info[3] / 2),
                     )
-                    urat_send_data["ObjectStatus"] = color_status
-                    urat_send_data["ObjectX"] = object_info.x()
-                    urat_send_data["ObjectY"] = object_info.y()
-                    urat_send_data["ObjectCX"] = blobs[b_index].x() + int(
+                    uart_send_data["ObjectStatus"] = color_status
+                    uart_send_data["ObjectX"] = object_info.x()
+                    uart_send_data["ObjectY"] = object_info.y()
+                    uart_send_data["ObjectCX"] = blobs[b_index].x() + int(
                         object_info[2] / 2
                     )
-                    urat_send_data["ObjectCY"] = blobs[b_index].y() + int(
+                    uart_send_data["ObjectCY"] = blobs[b_index].y() + int(
                         object_info[3] / 2
                     )
-                    urat_send_data["ObjectWidth"] = object_info[2]
-                    urat_send_data["ObjectHeight"] = object_info[3]
+                    uart_send_data["ObjectWidth"] = object_info[2]
+                    uart_send_data["ObjectHeight"] = object_info[3]
                 else:
-                    urat_send_data["ObjectStatus"] = "none"
+                    uart_send_data["ObjectStatus"] = "none"
                     
             elif img_mode == "find_apriltags":
+                if task is not None:
+                    kpu.deinit(task)
+                    del task
+                    gc.collect()
+                    task = None
                 img = sensor.snapshot()
                 apriltags = img.find_apriltags(
                     fx=f_x, fy=f_y, cx=c_x, cy=c_y
@@ -230,18 +242,19 @@ def main(
                     )
                     # output1="id:"+str(tag.id())+",Tx: "+str(tag.x_translation())+",Ty: "+str(tag.y_translation())+",Tz: "+str(tag.z_translation())+",Color:"+str(color_status)+"\n"
                     # dict to json
-                    urat_send_data["TagId"] = tag.id()
-                    urat_send_data["TagTx"] = tag.x_translation()
-                    urat_send_data["TagTy"] = tag.y_translation()
-                    urat_send_data["TagTz"] = tag.z_translation()
-                    urat_send_data["TagCx"] = tag.cx()
-                    urat_send_data["TagCy"] = tag.cy()
+                    uart_send_data["TagId"] = tag.id()
+                    uart_send_data["TagTx"] = tag.x_translation()
+                    uart_send_data["TagTy"] = tag.y_translation()
+                    uart_send_data["TagTz"] = tag.z_translation()
+                    uart_send_data["TagCx"] = tag.cx()
+                    uart_send_data["TagCy"] = tag.cy()
 
-            urat_send_data_json = json.dumps(urat_send_data)
-            print(urat_send_data_json)
-            uart.write(urat_send_data_json)
+            uart_send_data_json = json.dumps(uart_send_data)
+            print(uart_send_data_json)
+            uart.write(uart_send_data_json)
             lcd.display(img)
     except Exception as e:
+        print(e)
         raise e
     finally:
         if not task is None:
