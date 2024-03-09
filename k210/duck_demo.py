@@ -38,10 +38,6 @@ def init_uart():
     # 初始化串口
     uart = UART(UART.UART1, 115200, read_buf_len=4096)
     uart.write("Hello pico! K210 restart")
-    # fm.register(10, fm.fpioa.UART1_TX, force=True)
-    # fm.register(11, fm.fpioa.UART1_RX, force=True)
-
-    # uart = UART(UART.UART1, 115200, 8, 0, 0, timeout=1000, read_buf_len=256)
     return uart
 
 
