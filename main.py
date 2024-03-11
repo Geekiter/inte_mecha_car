@@ -247,14 +247,16 @@ def keepBackward(sp):
 target_index = 0
 target_img_mode = [
     "find_apriltags",
+    "kpu",
     "find_apriltags",
     "find_apriltags",
     "find_apriltags",
 ]
-target_id_list = [20, 1, 86, ""]
+target_id_list = [20, "", 1, 86, ""]
 
 target_action_list = [
     "locate",
+    "grab-by-kpu",
     "grab-by-kpu-apriltags",
     "put-down",
     "finished",
@@ -308,6 +310,10 @@ duck_width = 4.5
 duck_height = 4.2
 duck_width_zoomfactor = 77 * 13.5 / 4.5 * duck_width
 duck_height_zoomfactor = 84 * 13.5 / 4.2 * duck_height
+
+duck_width_zoomfactor_qqvga = 55 * 14.5 / 4.5 * duck_width
+duck_height_zoomfactor_qqvga = 44 * 14.5 / 4.2 * duck_height
+
 locate_stop_dis = 48  # cm
 
 
@@ -467,7 +473,7 @@ def put_down_action(tag_x, tag_y, tag_z):
             armUp(30)
             sleep(0.3)
 
-        # for _ in range(8):
+        # for _ in range(2):
         #     keepForward(30)
 
         for _ in range(4):
@@ -491,8 +497,8 @@ def get_duck_action(x, y, w, h):
     global target_index
     cx = x + w / 2
     cy = y + h / 2
-    dis_w = duck_width_zoomfactor / w
-    dis_h = duck_height_zoomfactor / h
+    dis_w = duck_width_zoomfactor_qqvga / w
+    dis_h = duck_height_zoomfactor_qqvga / h
     print(f"dis_h: {dis_h}")
     print(f"dis_w: {dis_w}")
 
@@ -537,6 +543,44 @@ def get_duck_action(x, y, w, h):
         #     for _ in range(6):
         #         keepForward(25)
         #         sleep(0.3)
+
+
+def kpu_locate_action(x, y, w, h):
+    global grab_mode
+    global target_index
+    cx = x + w / 2
+    cy = y + h / 2
+    dis_w = duck_width_zoomfactor_qqvga / w
+    dis_h = duck_height_zoomfactor_qqvga / h
+    print(f"dis_h: {dis_h}")
+    print(f"dis_w: {dis_w}")
+    obj_dis = max(dis_w, dis_h)
+    print(f"obj_dis: {obj_dis}")
+    if obj_dis > 1.5 * (rotate_in_front_of_obj + claw_open_len):
+        if cy < k210_y_center - 1.5 * arm_range:
+            print("view is low, arm up")
+            armUp(30)
+            sleep(0.3)
+        elif cy > k210_y_center + 1.5 * arm_range:
+            print("view is high, arm down")
+            armDown(10)
+            sleep(0.3)
+        elif cx > k210_center + claw_range:
+            print("right")
+            keepTurnRight(30)
+
+        # 如果cx小于k210_center - claw_range，说明物体在左边，左转
+        elif cx < k210_center - claw_range:
+            print("left")
+            keepTurnLeft(30)
+        else:
+            print("forward")
+            keepForward(40)
+            sleep(0.1)
+    else:
+        for _ in range(6):
+            armDown(10)
+        target_index += 1
 
 
 def get_kpu_tag_action(tag_x, tag_y, tag_z):
@@ -655,29 +699,39 @@ while is_finished is False and not test_mode:
         elif target_action_list[target_index] == "finished":
             is_finished = True
             break
+        elif target_action_list[target_index] == "locate-by-kpu":
+            obj_status = data.get("DuckStatus", "N/A")
+            if obj_status == "get":
+                obj_w = get_obj_data("DuckWidth")
+                obj_h = get_obj_data("DuckHeight")
+                obj_x = get_obj_data("DuckX")
+                obj_y = get_obj_data("DuckY")
+            else:
+                keepTurnRight(30)
+                sleep(0.3)
 
+                kpu_locate_action(obj_x, obj_y, obj_w, obj_h)
         elif target_action_list[target_index] == "grab-by-kpu-apriltags":
 
             zoomfactor = kpu_tag_zf
             tag_id = data.get("TagId", "N/A")
             tag_status = data.get("TagStatus", "none")
 
-            if tag_id == target_id_list[target_index]:
-                tag_z = int(-zoomfactor * float(data.get("TagTz", "999")))
-                tag_x = int(zoomfactor * float(data.get("TagTx", "999")))
-                tag_y = int(-zoomfactor * float(data.get("TagTy", "999")))
-                tag_cx = int(data.get("TagCx", "999"))
-                tag_cy = int(data.get("TagCy", "999"))
-                print(f"tag_z: {tag_z}, tag_cx: {tag_cx}, tag_cy: {tag_cy}")
-                if tag_status == "get":
-                    get_kpu_tag_action(tag_cx, tag_cy, tag_z)
+            tag_z = int(-zoomfactor * float(data.get("TagTz", "999")))
+            tag_x = int(zoomfactor * float(data.get("TagTx", "999")))
+            tag_y = int(-zoomfactor * float(data.get("TagTy", "999")))
+            tag_cx = int(data.get("TagCx", "999"))
+            tag_cy = int(data.get("TagCy", "999"))
+            print(f"tag_z: {tag_z}, tag_cx: {tag_cx}, tag_cy: {tag_cy}")
+            if tag_status == "get":
+                get_kpu_tag_action(tag_cx, tag_cy, tag_z)
             if tag_status == "none":
                 if grab_mode:
-                    for _ in range(2):
+                    for _ in range(1):
                         keepBackward(30)
-                    for _ in range(4):
-                        armUp(30)
                     for _ in range(8):
+                        armUp(25)
+                    for _ in range(10):
                         keepForward(25)
                         # sleep(0.1)
                     for _ in range(10):
