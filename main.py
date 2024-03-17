@@ -244,24 +244,6 @@ def keepBackward(sp):
 
 
 # # ----------------- adjustable parameters -----------------
-target_index = 0
-target_img_mode = [
-    "find_apriltags",
-    "kpu",
-    "find_apriltags",
-    "find_apriltags",
-    "find_apriltags",
-]
-target_id_list = [20, "", 1, 86, ""]
-
-target_action_list = [
-    "locate",
-    "grab-by-kpu",
-    "grab-by-kpu-apriltags",
-    "put-down",
-    "finished",
-]
-
 """
 action status: 
 
@@ -272,49 +254,59 @@ action status:
 - put-down: put down the object
 - grab-by-kpu: grab the object by kpu
 """
-claw_open_len = 13.5  # cm
-claw_close_len = 14
-
-grab_color = "red"
-
-test_mode = False
+target_action = [
+    {"mode": "find_apriltags", "id": 20, "action": "locate"},
+    {"mode": "kpu", "id": "", "action": "locate-by-kpu"},
+    {"mode": "find_apriltags", "id": 1, "action": "grab-by-kpu-apriltags"},
+    {"mode": "find_apriltags", "id": 86, "action": "put-down"},
+    {"mode": "find_apriltags", "id": "", "action": "finished"},
+]
 
 big_tag_id_list = [
     20,
 ]
 small_tag_id_list = [86]
-small_tag_width = 5.1
-small_tag_zoomfactor = 33 / 13 / 5.1 * small_tag_width
-big_tag_width = 8.8
-big_tag_zoomfactor = 47 / 4.15 / 8.8 * big_tag_width
 
-kpu_tag_width = 1.5
-kpu_tag_zf = claw_close_len / 10 / 1.5 * kpu_tag_width
+small_tag_zoomfactor = 2.53
+big_tag_zoomfactor = 11.33
+kpu_tag_zf = 1.42
+duck_width_zoomfactor_qqvga = 797.5
+duck_height_zoomfactor_qqvga = 638
 
-object_width = 6  # cm
-color_obj_zoomfactor = 19.5 * 2 * 27 / 6 * object_width
-object_height = 8  # cm
-color_obj_zoomfactor_h = 19.5 * 2 * 36 / 8 * object_width
 
+target_img_mode = []
+for action in target_action:
+    target_img_mode.append(action["mode"])
+
+target_id_list = []
+for action in target_action:
+    target_id_list.append(action["id"])
+
+target_action_list = []
+for action in target_action:
+    target_action_list.append(action["action"])
+
+
+target_index = 0
+
+claw_open_len = 13.5  # cm
+claw_close_len = 14
+
+test_mode = False
 k210_cam_offset = 85 - 160 / 2  # 相机安装在机械臂上的偏移量
+
 claw_range = (90 - 75) / 2
 k210_qqvga = (120, 160)
 k210_qvga = (240, 320)
 current_resolution = k210_qqvga
 k210_center = current_resolution[1] / 2 + k210_cam_offset  # QQVGA分辨率：120*160
 k210_y_center = current_resolution[0] / 2
+
 arm_range = 20  # pixel 上下浮动范围
 rotate_in_front_of_obj = 2  # cm 在物体前方允许旋转的距离
-
-duck_width = 4.5
-duck_height = 4.2
-duck_width_zoomfactor = 77 * 13.5 / 4.5 * duck_width
-duck_height_zoomfactor = 84 * 13.5 / 4.2 * duck_height
-
-duck_width_zoomfactor_qqvga = 55 * 14.5 / 4.5 * duck_width
-duck_height_zoomfactor_qqvga = 44 * 14.5 / 4.2 * duck_height
-
 locate_stop_dis = 48  # cm
+arm_up_speed = 45
+arm_down_speed = 10
 
 
 def get_zf(id):
@@ -332,84 +324,34 @@ arm_up_len = 2
 # # ----------------- the life cycle of a job -----------------
 
 
-# ## test
-sp = 50
-while test_mode:
-    # moveForwardSpd(sp)
-
-    # rotateLeftSpd(sp)
-    # rotateRightSpd(sp)
-    # moveBackwardSpd(sp)
-    # armUp(30)
-    # armDown(10)
-    # openClaw()
-    # closeClaw()
-    # parallelLeft(sp)
-    # stopMove()
-    pass
-
-if test_mode:
-    for _ in range(3):
-        closeClaw()
-    for _ in range(3):
-        openClaw()
-
-# ### test end
-# ### -----------------
 # ## main
 for _ in range(10):
-    armDown(10)
+    armDown(arm_down_speed)
 
 for _ in range(8):
     openClaw()
-    # closeClaw()
-    # pass
 
 
-# 判断当前应该前进还是后退，还是转弯，还是抓取
-def get_color_action(cx, cy, w, h):
-    global is_finished
-    global grab_mode
-    obj_dis_w = color_obj_zoomfactor / w
-    obj_dis = color_obj_zoomfactor_h / h
-    print(f"obj_dis: {obj_dis}")
-    # 如果cx大于k210_center + claw_range，说明物体在右边，右转
-
-    # 如果obj_dis > rotate_in_front_of_obj + claw_open_len，说明物体在前方，调整角度
-    if (obj_dis > rotate_in_front_of_obj + claw_open_len and not grab_mode) or (
-        obj_dis_w > rotate_in_front_of_obj + claw_open_len and not grab_mode
-    ):
-        if cy < k210_y_center - 1.5 * arm_range:
-            print("view is low, arm up")
-            armUp(30)
-            sleep(0.3)
-        elif cy > k210_y_center + 1.5 * arm_range:
-            print("view is high, arm down")
-            armDown(10)
-            sleep(0.3)
-        elif cx > k210_center + claw_range:
-            print("right")
-            keepTurnRight(30)
-
-        # 如果cx小于k210_center - claw_range，说明物体在左边，左转
-        elif cx < k210_center - claw_range:
-            print("left")
-            keepTurnLeft(30)
-        else:
-            print("forward")
-            keepForward(30)
+def close_to_obj_action(cx, cy):
+    if cy < k210_y_center - 1.5 * arm_range:
+        print("view is low, arm up")
+        armUp(arm_up_speed)
+        sleep(0.3)
+    elif cy > k210_y_center + 1.5 * arm_range:
+        print("view is high, arm down")
+        armDown(arm_down_speed)
+        sleep(0.3)
+    elif cx > k210_center + claw_range:
+        print("right")
+        keepTurnRight(30)
+    # 如果cx小于k210_center - claw_range，说明物体在左边，左转
+    elif cx < k210_center - claw_range:
+        print("left")
+        keepTurnLeft(30)
     else:
-        grab_mode = True
-        if h > claw_arm_up_len:
-            armUp(30)
-            sleep(1)
-            print("arm up, and h is: ", h)
-        else:
-            print("forward to grab")
-            # moveForwardSpd(30)
-            for _ in range(2):
-                keepForward(25)
-                sleep(0.3)
+        print("forward")
+        keepForward(45)
+        sleep(0.1)
 
 
 def get_locate_action(tag_x, tag_y, tag_z):
@@ -418,131 +360,51 @@ def get_locate_action(tag_x, tag_y, tag_z):
     print(f"tag_x: {tag_x}, tag_y: {tag_y}, tag_z: {tag_z}")
     print(f"obj_dis: {obj_dis}")
     if obj_dis > locate_stop_dis:
-        if tag_y < k210_y_center - arm_range:
-            print(
-                "view high is low, tag_y: %d, range: %d"
-                % (tag_y, k210_y_center - arm_range)
-            )
-            armUp(30)
-            sleep(0.3)
-        elif tag_y > k210_y_center + arm_range:
-            print("view high is high, tag_y: %d, range: %d" % (tag_y, k210_y_center))
-            armDown(10)
-            sleep(0.3)
-        elif tag_x > k210_center + claw_range:
-            print("right, tag_x: %d, range: %d" % (tag_x, k210_center))
-            keepTurnRight(40)
-        elif tag_x < k210_center - claw_range:
-            print("left, tag_x: %d, range: %d" % (tag_x, k210_center))
-            keepTurnLeft(40)
-        else:
-            print("forward")
-            keepForward(60)
+        close_to_obj_action(tag_x, tag_y)
     else:
         for _ in range(16):
-            armDown(10)
+            armDown(arm_down_speed)
             sleep(0.1)
 
         print("have located the object")
         target_index += 1
 
 
+def put_down_transition():
+    for _ in range(10):
+        keepBackward(30)
+
+    for _ in range(10):
+        armDown(arm_down_speed)
+        sleep(0.3)
+
+    for _ in range(4):
+        closeClaw()
+
+
+def grab_transition():
+    for _ in range(12):
+        armUp(arm_up_speed)
+    for _ in range(8):
+        keepBackward(30)
+
+
 def put_down_action(tag_x, tag_y, tag_z):
     global put_down_obj
     global target_index
     if tag_z > 1.2 * (claw_close_len + arm_up_len):
-        if tag_y < k210_y_center - arm_range:
-            print("view high is low, arm up")
-            armUp(30)
-            sleep(0.3)
-        elif tag_y > k210_y_center + arm_range:
-            print("view high is high, arm down")
-            armDown(10)
-            sleep(0.3)
-        elif tag_x > k210_center + claw_range:
-            print("right")
-            keepTurnRight(30)
-        elif tag_x < k210_center - claw_range:
-            print("left")
-            keepTurnLeft(30)
-        else:
-            print("forward")
-            keepForward(40)
+        close_to_obj_action(tag_x, tag_y)
     else:
         for _ in range(3):
-            armUp(30)
+            armUp(arm_up_speed)
             sleep(0.3)
-
-        # for _ in range(2):
-        #     keepForward(30)
 
         for _ in range(4):
             openClaw()
 
-        for _ in range(10):
-            keepBackward(30)
-
-        for _ in range(10):
-            armDown(10)
-            sleep(0.3)
-
-        for _ in range(4):
-            closeClaw()
+        put_down_transition()
 
         target_index += 1
-
-
-def get_duck_action(x, y, w, h):
-    global grab_mode
-    global target_index
-    cx = x + w / 2
-    cy = y + h / 2
-    dis_w = duck_width_zoomfactor_qqvga / w
-    dis_h = duck_height_zoomfactor_qqvga / h
-    print(f"dis_h: {dis_h}")
-    print(f"dis_w: {dis_w}")
-
-    obj_dis = max(dis_w, dis_h)
-    print(f"obj_dis: {obj_dis}")
-    # 如果cx大于k210_center + claw_range，说明物体在右边，右转
-
-    # 如果obj_dis > rotate_in_front_of_obj + claw_open_len，说明物体在前方，调整角度
-    if obj_dis > rotate_in_front_of_obj + claw_open_len + 6 and not grab_mode:
-        if cy < k210_y_center - 1.5 * arm_range:
-            print("view is low, arm up")
-            armUp(30)
-            sleep(0.3)
-        elif cy > k210_y_center + 1.5 * arm_range:
-            print("view is high, arm down")
-            armDown(10)
-            sleep(0.3)
-        elif cx > k210_center + claw_range:
-            print("right")
-            keepTurnRight(30)
-
-        # 如果cx小于k210_center - claw_range，说明物体在左边，左转
-        elif cx < k210_center - claw_range:
-            print("left")
-            keepTurnLeft(30)
-        else:
-            print("forward")
-            keepForward(40)
-            sleep(0.1)
-    else:
-        for _ in range(2):
-            armDown(10)
-        target_index += 1
-        # grab_mode = True
-        # if h > claw_arm_up_len:
-        #     armUp(35)
-        #     sleep(0.5)
-        #     print("arm up, and h is: ", h)
-        # else:
-        #     print("forward to grab")
-        #     # moveForwardSpd(30)
-        #     for _ in range(6):
-        #         keepForward(25)
-        #         sleep(0.3)
 
 
 def kpu_locate_action(x, y, w, h):
@@ -557,29 +419,10 @@ def kpu_locate_action(x, y, w, h):
     obj_dis = max(dis_w, dis_h)
     print(f"obj_dis: {obj_dis}")
     if obj_dis > 1.5 * (rotate_in_front_of_obj + claw_open_len):
-        if cy < k210_y_center - 1.5 * arm_range:
-            print("view is low, arm up")
-            armUp(30)
-            sleep(0.3)
-        elif cy > k210_y_center + 1.5 * arm_range:
-            print("view is high, arm down")
-            armDown(10)
-            sleep(0.3)
-        elif cx > k210_center + claw_range:
-            print("right")
-            keepTurnRight(30)
-
-        # 如果cx小于k210_center - claw_range，说明物体在左边，左转
-        elif cx < k210_center - claw_range:
-            print("left")
-            keepTurnLeft(30)
-        else:
-            print("forward")
-            keepForward(40)
-            sleep(0.1)
+        close_to_obj_action(cx, cy)
     else:
         for _ in range(6):
-            armDown(10)
+            armDown(arm_down_speed)
         target_index += 1
 
 
@@ -599,172 +442,87 @@ def get_kpu_tag_action(tag_x, tag_y, tag_z):
         armUp(25)
 
 
+def get_json(uart_data):
+    try:
+        uart_data = uart_data.read().decode("utf-8")
+        # find { and } first appear position, then cut the string
+        if "{" in uart_data and "}" in uart_data:
+            uart_data = uart_data[uart_data.index("{") : uart_data.index("}") + 1]
+            return json.loads(uart_data)
+        else:
+            return {}
+    except Exception as e:
+        print("get json error", e)
+        return {}
+
+
 # 核心逻辑
 while is_finished is False and not test_mode:
 
-    if uart2.any():
-        # print(f"current target id is: {target_id_list[target_index]}")
-        try:
-            uart2_data = uart2.read().decode("utf-8")
-            print(f"uart2_data: {uart2_data}")
-            # 查找}第一个出现的位置，然后截取字符串
-            json_end_index = uart2_data.find("}")
-            if json_end_index == -1:
-                continue
-            else:
-                uart2_data = uart2_data[: uart2_data.find("}") + 1]
-            data = json.loads(uart2_data)
-        except Exception as e:
-            print("urat2 data error", e)
-            data = {}
-        if target_index < len(target_action_list):
-            print(f"current target action is: {target_action_list[target_index]}")
-        else:
-            print("target action list is empty")
-            break
+    if target_index < len(target_action_list):
+        print(f"current target action is: {target_action_list[target_index]}")
+    else:
+        print("target action list is empty")
+        break
 
-        def get_obj_data(key):
-            global data
-            try:
-                return int(data.get(key, 0) if obj_status == "get" else 0)
-            except Exception as e:
-                print("get obj data err:", e)
-                print(data.get(key, 0))
-                return 0
+    data = get_json(uart2)
+    print(f"current data: {data}")
 
-        k210_img_mode = data.get("img_mode", "N/A")
-        if k210_img_mode != target_img_mode[target_index]:
-            # uart2.write("the count of pico w is " + str(count) + "\n")
-            uart_write_dict = {"img_mode": target_img_mode[target_index]}
-            uart2.write(json.dumps(uart_write_dict) + "\n")
-        if target_action_list[target_index] == "put-down":
-            tag_id = data.get("TagId", "N/A")
-            print(f"tag_id: {tag_id}")
-            if tag_id == target_id_list[target_index]:
-                zoomfactor = get_zf(tag_id)
-                print(f"received tag id:{tag_id}")
-                print(
-                    f"x: {data.get('TagTx', '999')}, y: {data.get('TagTy', '999')}, z: {data.get('TagTz', '999')}"
-                )
-                tag_z = int(-zoomfactor * float(data.get("TagTz", "999")))
-                tag_x = int(zoomfactor * float(data.get("TagTx", "999")))
-                tag_y = int(-zoomfactor * float(data.get("TagTy", "999")))
-                tag_cx = int(data.get("TagCx", "999"))
-                tag_cy = int(data.get("TagCy", "999"))
-                print(f"tag_z: {tag_z}, tag_cx: {tag_cx}, tag_cy: {tag_cy}")
-                put_down_action(tag_cx, tag_cy, tag_z)
-            else:
-                keepTurnRight(30)
-                sleep(0.3)
-        elif target_action_list[target_index] == "grab-by-color":
-            obj_status = data.get("ObjectStatus", "N/A")
-            if obj_status == "get":
+    k210_img_mode = data.get("img_mode", "N/A")
 
-                obj_w = get_obj_data("ObjectWidth")
-                obj_h = get_obj_data("ObjectHeight")
-                obj_x = get_obj_data("ObjectX")
-                obj_y = get_obj_data("ObjectY")
-                obj_cx = get_obj_data("ObjectCX")
-                obj_cy = get_obj_data("ObjectCY")
-                # print(
-                #     f"obj_status: {obj_status}, obj_w: {obj_w}, obj_h: {obj_h}, obj_x: {obj_x}, obj_y: {obj_y}, obj_cx: {obj_cx}, obj_cy: {obj_cy}"
-                # )
+    tag_status = "none"
+    obj_status = "none"
+    if target_action[target_index]["id"] != "":
+        tag_id = int(data.get("TagId", "999"))
+        tag_status = data.get("TagStatus", "none")
+        zoomfactor = get_zf(tag_id)
+        tag_z = int(-zoomfactor * float(data.get("TagTz", "999")))
+        tag_x = int(zoomfactor * float(data.get("TagTx", "999")))
+        tag_y = int(-zoomfactor * float(data.get("TagTy", "999")))
+        tag_cx = int(data.get("TagCx", "999"))
+        tag_cy = int(data.get("TagCy", "999"))
+    else:
+        obj_w = data.get("DuckWidth", 0)
+        obj_h = data.get("DuckHeight", 0)
+        obj_x = data.get("DuckX", 0)
+        obj_y = data.get("DuckY", 0)
+        obj_status = data.get("DuckStatus", "none")
 
-                get_color_action(obj_cx, obj_cy, obj_w, obj_h)
-            if obj_status == "none":
-                if grab_mode:
-                    for _ in range(6):
-                        closeClaw()
-                    for _ in range(5):
-                        armUp(30)
-                    for _ in range(8):
-                        keepBackward(30)
-                    # for _ in range(15):
-                    #     armDown(10)
-                    target_index += 1
-                    grab_mode = False
-                else:
-                    keepTurnRight(30)
-                    sleep(0.3)
-        elif target_action_list[target_index] == "grab-by-kpu":
-            obj_status = data.get("DuckStatus", "N/A")
-            if obj_status == "get":
-                obj_w = get_obj_data("DuckWidth")
-                obj_h = get_obj_data("DuckHeight")
-                obj_x = get_obj_data("DuckX")
-                obj_y = get_obj_data("DuckY")
+    if k210_img_mode != target_img_mode[target_index]:
+        uart_write_dict = {"img_mode": target_img_mode[target_index]}
+        uart2.write(json.dumps(uart_write_dict) + "\n")
 
-                get_duck_action(obj_x, obj_y, obj_w, obj_h)
+    if target_action_list[target_index] == "finished":
+        is_finished = True
+        break
+    if tag_status == "none" and obj_status == "none":
+        if grab_mode:
+            for _ in range(1):
+                keepBackward(30)
+            for _ in range(8):
+                armUp(25)
+            for _ in range(10):
+                keepForward(25)
+            for _ in range(10):
+                closeClaw()
 
-        elif target_action_list[target_index] == "finished":
-            is_finished = True
-            break
+            grab_transition()
+
+            target_index += 1
+            grab_mode = False
         elif target_action_list[target_index] == "locate-by-kpu":
-            obj_status = data.get("DuckStatus", "N/A")
-            if obj_status == "get":
-                obj_w = get_obj_data("DuckWidth")
-                obj_h = get_obj_data("DuckHeight")
-                obj_x = get_obj_data("DuckX")
-                obj_y = get_obj_data("DuckY")
-            else:
-                keepTurnRight(30)
-                sleep(0.3)
-
-                kpu_locate_action(obj_x, obj_y, obj_w, obj_h)
-        elif target_action_list[target_index] == "grab-by-kpu-apriltags":
-
-            zoomfactor = kpu_tag_zf
-            tag_id = data.get("TagId", "N/A")
-            tag_status = data.get("TagStatus", "none")
-
-            tag_z = int(-zoomfactor * float(data.get("TagTz", "999")))
-            tag_x = int(zoomfactor * float(data.get("TagTx", "999")))
-            tag_y = int(-zoomfactor * float(data.get("TagTy", "999")))
-            tag_cx = int(data.get("TagCx", "999"))
-            tag_cy = int(data.get("TagCy", "999"))
-            print(f"tag_z: {tag_z}, tag_cx: {tag_cx}, tag_cy: {tag_cy}")
-            if tag_status == "get":
-                get_kpu_tag_action(tag_cx, tag_cy, tag_z)
-            if tag_status == "none":
-                if grab_mode:
-                    for _ in range(1):
-                        keepBackward(30)
-                    for _ in range(8):
-                        armUp(25)
-                    for _ in range(10):
-                        keepForward(25)
-                        # sleep(0.1)
-                    for _ in range(10):
-                        closeClaw()
-                    for _ in range(12):
-                        armUp(30)
-                    for _ in range(8):
-                        keepBackward(30)
-                    # for _ in range(15):
-                    #     armDown(10)
-                    target_index += 1
-                    grab_mode = False
-                else:
-                    keepForward(30)
-
-        elif target_action_list[target_index] == "locate":
-            tag_id = data.get("TagId", "N/A")
-            if tag_id == target_id_list[target_index]:
-                zoomfactor = get_zf(tag_id)
-                print(f"received tag id:{tag_id}")
-
-                tag_z = int(-zoomfactor * float(data.get("TagTz", "999")))
-                tag_x = int(zoomfactor * float(data.get("TagTx", "999")))
-                tag_y = int(-zoomfactor * float(data.get("TagTy", "999")))
-                tag_cx = int(data.get("TagCx", "999"))
-                tag_cy = int(data.get("TagCy", "999"))
-                tag_status = data.get("TagStatus", "none")
-                if tag_status == "get":
-                    get_locate_action(tag_cx, tag_cy, tag_z)
-            else:
-                keepTurnRight(30)
-                sleep(0.3)
-
+            keepForward(30)
+            sleep(0.1)
         else:
             keepTurnRight(30)
-            sleep(0.3)
+            sleep(0.1)
+    elif target_action_list[target_index] == "put-down":
+        if tag_id == target_id_list[target_index]:
+            put_down_action(tag_cx, tag_cy, tag_z)
+    elif target_action_list[target_index] == "grab-by-kpu-apriltags":
+        get_kpu_tag_action(tag_cx, tag_cy, tag_z)
+    elif target_action_list[target_index] == "locate":
+        if tag_id == target_id_list[target_index]:
+            get_locate_action(tag_cx, tag_cy, tag_z)
+    elif target_action_list[target_index] == "locate-by-kpu":
+        kpu_locate_action(obj_x, obj_y, obj_w, obj_h)
