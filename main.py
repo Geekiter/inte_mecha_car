@@ -255,12 +255,13 @@ action status:
 - grab-by-kpu: grab the object by kpu
 """
 target_action = [
-    {"mode": "find_apriltags", "id": 18, "action": "locate"},
+    # {"mode": "find_apriltags", "id": 18, "action": "locate"},
     {"mode": "find_apriltags", "id": 20, "action": "locate"},
-    {"mode": "kpu", "id": "", "action": "grab-by-kpu"},
+    # {"mode": "kpu", "id": "", "action": "grab-by-kpu"},
+    {"mode": "find_blobs", "id": "", "action": "grab-by-color"},
     {"mode": "find_apriltags", "id": 86, "action": "put-down"},
-    {"mode": "kpu", "id": "", "action": "grab-by-kpu"},
-    {"mode": "find_apriltags", "id": 88, "action": "put-down"},
+    # {"mode": "kpu", "id": "", "action": "grab-by-kpu"},
+    # {"mode": "find_apriltags", "id": 88, "action": "put-down"},
     {"mode": "find_apriltags", "id": "", "action": "finished"},
 ]
 
@@ -327,6 +328,8 @@ grab_attempted_get_count = 0
 grab_attempted_all_count = 0
 put_down_obj = False
 arm_up_len = 2
+search_count = 0
+discovered_obj = False
 # # ----------------- the life cycle of a job -----------------
 
 
@@ -373,7 +376,7 @@ def get_locate_action(tag_x, tag_y, tag_z):
             sleep(0.1)
 
         print("have located the object")
-        target_index += 1
+        next_target()
 
 
 def put_down_transition():
@@ -410,7 +413,7 @@ def put_down_action(tag_x, tag_y, tag_z):
 
         put_down_transition()
 
-        target_index += 1
+        next_target()
 
 
 def kpu_locate_action(x, y, w, h):
@@ -429,7 +432,7 @@ def kpu_locate_action(x, y, w, h):
     else:
         for _ in range(6):
             armDown(arm_down_speed)
-        target_index += 1
+        next_target()
 
 
 def get_kpu_tag_action(tag_x, tag_y, tag_z):
@@ -473,15 +476,43 @@ def get_json(uart_data):
         else:
             return {}
     except Exception as e:
-        print("get json error, original data: ", uart_read)
+        print("get json error, original data: ", e, uart_read)
         return {}
 
 
-grab_forward_count = 10
-grab_forward_count_origin = 10
+def discovered_obj_action():
+    global search_count
+    print("current search count: {}".format(search_count))
+    if search_count < 10:
+        keepTurnRight(45)
+        search_count += 1
+    elif 10 <= search_count < 20:
+        keepTurnLeft(45)
+        search_count += 1
+    else:
+        keepForward(45)
+        search_count = 0
+    sleep(0.1)
+
+
+def get_search_count(cx, resolution_x):
+
+    resolution_x_unit = resolution_x / 20
+    search_count = int(cx / resolution_x_unit)
+    return search_count
+
+def next_target():
+    global target_index
+    global discovered_obj
+    target_index += 1
+    discovered_obj = False
+
+grab_forward_count = 8
+grab_forward_count_origin = 8
 # 核心逻辑
 while is_finished is False and not test_mode:
-
+    if not uart2.any():
+        continue
     if target_index < len(target_action_list):
         print(f"current target action is: {target_action_list[target_index]}")
     else:
@@ -489,13 +520,11 @@ while is_finished is False and not test_mode:
         break
 
     data = get_json(uart2)
-    # if data == {}:
-    #     continue
+
     print(f"current data: {data}")
 
     k210_img_mode = data.get("img_mode", "N/A")
     find_tag_id = data.get("find_tag_id", None)
-
 
     tag_status = "none"
     obj_status = "none"
@@ -509,11 +538,11 @@ while is_finished is False and not test_mode:
         tag_cx = int(data.get("TagCx", "999"))
         tag_cy = int(data.get("TagCy", "999"))
     else:
-        obj_w = data.get("DuckWidth", 0)
-        obj_h = data.get("DuckHeight", 0)
-        obj_x = data.get("DuckX", 0)
-        obj_y = data.get("DuckY", 0)
-        obj_status = data.get("DuckStatus", "none")
+        obj_w = data.get("ObjectWidth", 0)
+        obj_h = data.get("ObjectHeight", 0)
+        obj_x = data.get("ObjectX", 0)
+        obj_y = data.get("ObjectY", 0)
+        obj_status = data.get("ObjectStatus", "none")
 
     if k210_img_mode != target_img_mode[target_index]:
         uart_write_dict = {"img_mode": target_img_mode[target_index]}
@@ -522,6 +551,12 @@ while is_finished is False and not test_mode:
     # if target_img_mode[target_index] == "find-apriltags" and find_tag_id != target_id_list[target_index]:
     #     uart_write_dict = {"find_tag_id": target_id_list[target_index]}
     #     uart2.write(json.dumps(uart_write_dict) + "\n")
+    if tag_status is "get":
+        search_count = get_search_count(tag_cx, current_resolution[1])
+        discovered_obj = True
+    elif obj_status is "get":
+        search_count = get_search_count(obj_x, current_resolution[1])
+        discovered_obj = True
 
     if target_action_list[target_index] == "finished":
         is_finished = True
@@ -529,7 +564,7 @@ while is_finished is False and not test_mode:
     elif grab_mode:
         for _ in range(1):
             keepBackward(30)
-        for _ in range(8):
+        for _ in range(10):
             armUp(25)
         for _ in range(grab_forward_count):
             keepForward(25)
@@ -539,13 +574,11 @@ while is_finished is False and not test_mode:
         for _ in range(6):
             armUp(arm_up_speed)
 
-        for _ in range(grab_forward_count - 1):
+        for _ in range(2 * (grab_forward_count - 1)):
             keepBackward(25)
 
         for _ in range(14):
             armDown(arm_down_speed)
-
-        
 
         # grab_transition()
 
@@ -553,11 +586,15 @@ while is_finished is False and not test_mode:
         grab_attempted = True
         obj_status = "none"
         sleep(2)
-                    
+
     elif grab_attempted:
         if data == {}:
             continue
-        print("all count:{}, get count:{}".format(grab_attempted_all_count, grab_attempted_get_count))
+        print(
+            "all count:{}, get count:{}".format(
+                grab_attempted_all_count, grab_attempted_get_count
+            )
+        )
         if obj_status == "get":
             grab_attempted_get_count += 1
             grab_attempted_all_count += 1
@@ -565,8 +602,8 @@ while is_finished is False and not test_mode:
             grab_attempted_all_count += 1
         if grab_attempted_all_count > 10:
             if grab_attempted_get_count >= 3:
-                grab_forward_count += 4
-                grab_mode = True
+                grab_forward_count += 1
+                grab_mode = False
                 grab_attempted = False
                 grab_attempted_get_count = 0
                 grab_attempted_all_count = 0
@@ -576,20 +613,25 @@ while is_finished is False and not test_mode:
                 grab_transition()
                 grab_forward_count = grab_forward_count_origin
                 grab_attempted = False
-                target_index += 1            
+                next_target()
+                
 
-    elif tag_status == "none" and obj_status == "none":
-        keepTurnRight(30)
-        sleep(0.3)
+    elif (tag_status == "none" and obj_status == "none") or (tag_status == "get" and tag_id != target_id_list[target_index]):
+        if discovered_obj:
+            discovered_obj_action()
+        else:
+            keepTurnRight(30)
+            sleep(0.3)
     elif target_action_list[target_index] == "put-down":
         if tag_id == target_id_list[target_index]:
             put_down_action(tag_cx, tag_cy, tag_z)
-    elif target_action_list[target_index] == "grab-by-kpu":
+    elif target_action_list[target_index] == "grab-by-kpu" or target_action_list[target_index] == "grab-by-color":
         print("obj_w: ", obj_w)
         obj_dis = duck_width_zoomfactor_qqvga / obj_w
         grab_by_kpu(obj_x, obj_y, obj_dis)
     elif target_action_list[target_index] == "locate":
         if tag_id == target_id_list[target_index]:
             get_locate_action(tag_cx, tag_cy, tag_z)
+
     # elif target_action_list[target_index] == "locate-by-kpu":
     #     kpu_locate_action(obj_x, obj_y, obj_w, obj_h)

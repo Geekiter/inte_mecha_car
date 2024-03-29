@@ -36,12 +36,14 @@ c_y = 120 * 0.5  # find_apriltags 如果没有设置，则默认为这个 (the i
 
 # kpu
 anchors = [2.41, 2.62, 1.06, 1.12, 1.94, 2.0, 1.41, 1.53, 0.59, 0.75]
-model_addr = "/sd/duck_in128.kmodel"
+model_addr = "/sd/duck_in224.kmodel"
 # model_addr = "/sd/m.kmodel"
 labels = ["red_box", "duck"]
+thresholds = [(72, 20, 127, 41, 56, 6)]
 
-# img_mode = "find_apriltags"
-img_mode = "kpu"
+img_mode = "find_apriltags"
+#img_mode = "kpu"
+img_mode = "find_blobs"
 task = None
 task = kpu.load(model_addr)
 kpu.init_yolo2(task, 0.5, 0.3, 5, anchors)
@@ -65,38 +67,42 @@ while True:
             if "{" in read_str and "}" in read_str:
                 read_str = read_str[read_str.index("{") : read_str.index("}") + 1]
                 uart_json = json.loads(read_str)
-
+        print("uart read data:", uart_json)
         if "img_mode" in uart_json:
             img_mode = uart_json["img_mode"]
-            if img_mode not in ["kpu", "find_apriltags"]:
+            if img_mode not in ["kpu", "find_apriltags", 'find_blobs']:
                 img_mode = "kpu"
+
             gc.collect()
             img = None
             print("uart img_mode:", img_mode)
-
+        find_tag_id = uart_json.get("find_tag_id", None)
     except Exception as e:
         print("uart read error:", e)
         uart_json = {}
+    uart_send_data["find_tag_id"] = find_tag_id
+    uart_send_data['img_mode'] = img_mode
     print("current mode: ", img_mode)
     if KEY.value() == 0:
         gc.collect()
         if img_mode == "kpu":
             img_mode = "find_apriltags"
         elif img_mode == "find_apriltags":
+            img_mode = "find_blobs"
+        else:
             img_mode = "kpu"
         time.sleep(1)
+    img = sensor.snapshot()
     if img_mode == "find_apriltags":
-        # if task is not None:
-        #     kpu.deinit(task)
-        #     gc.collect()
-        img = sensor.snapshot()
-
         apriltags = img.find_apriltags(
             fx=f_x, fy=f_y, cx=c_x, cy=c_y
         )  # defaults to TAG36H11
         uart_send_data["TagStatus"] = "none"
 
+
         for tag in apriltags:
+            # if tag.id() != find_tag_id:
+            #     continue
             img.draw_rectangle(tag.rect(), color=(255, 0, 0))
             img.draw_cross(tag.cx(), tag.cy(), color=(0, 255, 0))
 
@@ -107,20 +113,41 @@ while True:
             uart_send_data["TagTz"] = tag.z_translation()
             uart_send_data["TagCx"] = tag.cx()
             uart_send_data["TagCy"] = tag.cy()
-    elif img_mode == "kpu":
+
+        apriltags = None
+    elif img_mode == "find_blobs":
+        img = sensor.snapshot()
+        blobs = img.find_blobs([thresholds[0]], pixels_threshold=100)
+        if blobs:
+            max_pixel = 0
+            b_index = 0
+            for b in blobs:
+                if b[4] > max_pixel:
+                    max_pixel = b_index
+            object_info = blobs[b_index]
+            img.draw_rectangle(blobs[b_index][0:4])
+            img.draw_cross(
+                blobs[b_index].x() + int(object_info[2] / 2),
+                blobs[b_index].y() + int(object_info[3] / 2),
+            )
+            uart_send_data["ObjectStatus"] = "get"
+            uart_send_data["ObjectX"] = object_info.x()
+            uart_send_data["ObjectY"] = object_info.y()
+            uart_send_data["ObjectWidth"] = object_info[2]
+            uart_send_data["ObjectHeight"] = object_info[3]
+    else:
         # if task is None:
         #     task = kpu.load(model_addr)
         #     kpu.init_yolo2(task, 0.5, 0.3, 5, anchors)
-        img = sensor.snapshot()
-        img_size = 128
+        # img = sensor.snapshot()
+        img_size = 224
         img2 = img.resize(img_size, img_size)
         img2.pix_to_ai()
         objects = kpu.run_yolo2(task, img2)
         del img2
         if objects:
             for obj in objects:
-                min_w = 999
-                min_pos = None
+
                 if labels[obj.classid()] == "duck":
                     pos = obj.rect()
                     pos = (
@@ -129,22 +156,23 @@ while True:
                         int(pos[2] * img.width() / img_size),
                         int(pos[3] * img.height() / img_size),
                     )
-                    if pos[2] < min_w:
-                        min_w = pos[2]
-                        min_pos = pos
 
-                    uart_send_data["DuckStatus"] = "get"
-                uart_send_data["DuckX"] = min_pos[0]
-                uart_send_data["DuckY"] = min_pos[1]
-                uart_send_data["DuckWidth"] = min_pos[2]
-                uart_send_data["DuckHeight"] = min_pos[3]
 
-                img.draw_rectangle(min_pos, color=(0, 255, 255))
+                    uart_send_data["ObjectStatus"] = "get"
+                    uart_send_data["ObjectX"] = pos[0]
+                    uart_send_data["ObjectY"] = pos[1]
+                    uart_send_data["ObjectWidth"] = pos[2]
+                    uart_send_data["ObjectHeight"] = pos[3]
+
+                    img.draw_rectangle(pos, color=(0, 255, 255))
+
     lcd.display(img)
 
     uart_send_data_json = json.dumps(uart_send_data)
-    print("uart send data",uart_send_data_json)
+
     uart.write(uart_send_data_json)  # 数据回传
+    # print("uart send data",uart_send_data_json)
+
 
 
     # print(clock.fps())
