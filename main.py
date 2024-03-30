@@ -258,10 +258,13 @@ target_action = [
     # {"mode": "find_apriltags", "id": 18, "action": "locate"},
     {"mode": "find_apriltags", "id": 20, "action": "locate"},
     # {"mode": "kpu", "id": "", "action": "grab-by-kpu"},
-    {"mode": "find_blobs", "id": "", "action": "grab-by-color"},
-    {"mode": "find_apriltags", "id": 86, "action": "put-down"},
+    # {"mode": "find_blobs", "id": "", "action": "grab-by-color"},
+    # {"mode": "find_apriltags", "id": 86, "action": "put-down"},
     # {"mode": "kpu", "id": "", "action": "grab-by-kpu"},
     # {"mode": "find_apriltags", "id": 88, "action": "put-down"},
+    {"mode": "kpu", "id": "", "action": "locate-by-kpu"},
+    {"mode": "find_apriltags", "id": 1, "action": "grab-by-kpu-apriltags"},
+    {"mode": "find_apriltags", "id": 88, "action": "put-down"},
     {"mode": "find_apriltags", "id": "", "action": "finished"},
 ]
 
@@ -427,7 +430,7 @@ def kpu_locate_action(x, y, w, h):
     print(f"dis_w: {dis_w}")
     obj_dis = max(dis_w, dis_h)
     print(f"obj_dis: {obj_dis}")
-    if obj_dis > 1.5 * (rotate_in_front_of_obj + claw_open_len):
+    if obj_dis > rotate_in_front_of_obj + claw_open_len:
         close_to_obj_action(cx, cy, claw_range_level=1.5)
     else:
         for _ in range(6):
@@ -450,7 +453,9 @@ def get_kpu_tag_action(tag_x, tag_y, tag_z):
         print("grab mode")
         grab_mode = True
 
-        armUp(25)
+        for _ in range(4):
+            armUp(25)
+
 
 
 def grab_by_kpu(cx, cy, dis):
@@ -463,6 +468,63 @@ def grab_by_kpu(cx, cy, dis):
             armUp(arm_up_speed)
         else:
             grab_mode = True
+
+
+def grab_mode_in_kpu():
+    global grab_forward_count
+    for _ in range(1):
+        keepBackward(30)
+    for _ in range(10):
+        armUp(25)
+    for _ in range(grab_forward_count):
+        keepForward(25)
+    for _ in range(12):
+        closeClaw()
+
+    for _ in range(6):
+        armUp(arm_up_speed)
+
+    for _ in range(2 * (grab_forward_count - 1)):
+        keepBackward(25)
+
+    for _ in range(14):
+        armDown(arm_down_speed)
+
+
+def grab_mode_in_color():
+    global grab_forward_count
+    for _ in range(1):
+        keepBackward(30)
+    # for _ in range(10):
+    #     armUp(25)
+    for _ in range(grab_forward_count):
+        keepForward(25)
+    for _ in range(12):
+        closeClaw()
+
+    for _ in range(6):
+        armUp(arm_up_speed)
+
+    for _ in range(2 * (grab_forward_count - 1)):
+        keepBackward(25)
+
+    for _ in range(14):
+        armDown(arm_down_speed)
+
+
+def grab_by_color(cx, cy, dis):
+    global grab_mode
+    global is_grabbed
+    if dis > (rotate_in_front_of_obj + claw_open_len) and not grab_mode:
+        close_to_obj_action(cx, cy, claw_range_level=1.5)
+    else:
+        grab_mode = True
+        if cy > claw_arm_up_len:
+            armUp(25)
+            sleep(1)
+            print("arm up, and h is: ", cy)
+        else:
+            keepForward(25)
 
 
 def get_json(uart_data):
@@ -490,16 +552,18 @@ def discovered_obj_action():
         keepTurnLeft(45)
         search_count += 1
     else:
-        keepForward(45)
-        search_count = 0
-    sleep(0.1)
+        keepTurnRight(45)
+    sleep(0.3)
 
 
 def get_search_count(cx, resolution_x):
-
     resolution_x_unit = resolution_x / 20
-    search_count = int(cx / resolution_x_unit)
-    return search_count
+    sc = int(cx / resolution_x_unit)
+    if sc < 10:
+        return 20 - sc
+    else:
+        return sc - 10
+
 
 def next_target():
     global target_index
@@ -507,8 +571,11 @@ def next_target():
     target_index += 1
     discovered_obj = False
 
+
 grab_forward_count = 8
 grab_forward_count_origin = 8
+wait_ct = 0
+wait_ct_limit = 10
 # 核心逻辑
 while is_finished is False and not test_mode:
     if not uart2.any():
@@ -561,24 +628,11 @@ while is_finished is False and not test_mode:
     if target_action_list[target_index] == "finished":
         is_finished = True
         break
-    elif grab_mode:
-        for _ in range(1):
-            keepBackward(30)
-        for _ in range(10):
-            armUp(25)
-        for _ in range(grab_forward_count):
-            keepForward(25)
-        for _ in range(12):
-            closeClaw()
-
-        for _ in range(6):
-            armUp(arm_up_speed)
-
-        for _ in range(2 * (grab_forward_count - 1)):
-            keepBackward(25)
-
-        for _ in range(14):
-            armDown(arm_down_speed)
+    elif grab_mode and obj_status != "get":
+        if target_action_list[target_index] in ["grab-by-kpu", "grab-by-kpu-apriltags"]:
+            grab_mode_in_kpu()
+        elif target_action_list[target_index] == "grab-by-color":
+            grab_mode_in_color()
 
         # grab_transition()
 
@@ -614,24 +668,35 @@ while is_finished is False and not test_mode:
                 grab_forward_count = grab_forward_count_origin
                 grab_attempted = False
                 next_target()
-                
 
-    elif (tag_status == "none" and obj_status == "none") or (tag_status == "get" and tag_id != target_id_list[target_index]):
+    elif (tag_status == "none" and obj_status == "none") or (
+        tag_status == "get" and tag_id != target_id_list[target_index]
+    ):
         if discovered_obj:
-            discovered_obj_action()
+            # discovered_obj_action()
+            print(f"wait ct={wait_ct}")
+            wait_ct += 1
+            if wait_ct >= wait_ct_limit:
+                discovered_obj = False
+                wait_ct = 0
         else:
             keepTurnRight(30)
             sleep(0.3)
     elif target_action_list[target_index] == "put-down":
         if tag_id == target_id_list[target_index]:
             put_down_action(tag_cx, tag_cy, tag_z)
-    elif target_action_list[target_index] == "grab-by-kpu" or target_action_list[target_index] == "grab-by-color":
+    elif target_action_list[target_index] == "grab-by-kpu":
         print("obj_w: ", obj_w)
         obj_dis = duck_width_zoomfactor_qqvga / obj_w
         grab_by_kpu(obj_x, obj_y, obj_dis)
+    elif target_action_list[target_index] == "grab-by-color":
+        print("obj_w: ", obj_w)
+        obj_dis = duck_width_zoomfactor_qqvga / obj_w
+        grab_by_color(obj_x, obj_y, obj_dis)
     elif target_action_list[target_index] == "locate":
         if tag_id == target_id_list[target_index]:
             get_locate_action(tag_cx, tag_cy, tag_z)
-
-    # elif target_action_list[target_index] == "locate-by-kpu":
-    #     kpu_locate_action(obj_x, obj_y, obj_w, obj_h)
+    elif target_action_list[target_index] == "grab-by-kpu-apriltags":
+        get_kpu_tag_action(tag_cx, tag_cy, tag_z)
+    elif target_action_list[target_index] == "locate-by-kpu":
+        kpu_locate_action(obj_x, obj_y, obj_w, obj_h)
