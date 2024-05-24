@@ -1,6 +1,6 @@
 from machine import Pin, PWM, ADC
 from utime import sleep
-
+import re
 import json
 from umqtt.simple import MQTTClient
 import time
@@ -11,841 +11,41 @@ import neopixel
 import random
 import machine
 from utime import sleep
+import math
 
 # http server
 from micropyserver import MicroPyServer
 import utils
 from motorPCA9685 import MotorDriver
 
-# config
-# import config
-wifiName = "XXX"
-wifiPassword = "xxxxxx"
+# # ----------------- fixed parameters -----------------
+# ## 初始化UART
+uart = UART(1, baudrate=115200, tx=Pin(4), rx=Pin(5))
+uart2 = UART(0, baudrate=115200, tx=Pin(12), rx=Pin(13))
+inb1 = Pin(10, Pin.OUT)
+inb2 = Pin(9, Pin.OUT)
+pwmb = PWM(Pin(11))
 
-# MQTT setting
-myTopic = "apriltagSize"
-clientID = "car1"
+m = MotorDriver()
 
-serverIP = "192.168.31.92"
-port = 1883
-
-# your device name
-machineId = "car"
-
-# LED
-Led_R = PWM(Pin(20))
-Led_G = PWM(Pin(19))
-Led_B = PWM(Pin(18))
-
-# Initialize ADC
-adc = ADC(Pin(26))  # Assuming you're using GPIO 26 for ADC
-resistance_ratio = 0.27
-ADC_MAX = 4095  # Maximum ADC value for 12-bit ADC
-V_REF = 3.3  # Reference voltage for the Pico's ADC
-
-# infrared remote
-IR_PIN = Pin(3, Pin.IN, Pin.PULL_UP)
-
-grabState = 0  # 0 unknown, 1, close, 2, open
-grabLastState = 0
-maxGrabLevel = 70
-minGrabLevel = 30
-currentGrabLevel = 70
-# exec_cmd
-N = 0
-
-# define for arm and claw control
-
-# ina1 = Pin(7,Pin.OUT)
-# ina2 = Pin(8, Pin.OUT)
+# ## arm
 ina1 = Pin(8, Pin.OUT)
 ina2 = Pin(7, Pin.OUT)
 pwma = PWM(Pin(6))
 pwma.freq(1000)
 
-# inb1 = Pin(9,Pin.OUT)
-# inb2 = Pin(10, Pin.OUT)
-inb1 = Pin(10, Pin.OUT)
-inb2 = Pin(9, Pin.OUT)
-pwmb = PWM(Pin(11))
 
-pwmb.freq(1000)
+is_finished = False
 
-timestamp = int(time.time())
-filename1 = f"data_log_{timestamp}.csv"
 
-# Record the start time
-start_time = utime.ticks_ms()
+# ## grab claw
+maxGrabLevel = 70
+minGrabLevel = 30
+grabLastState = 2
+grabState = 0  # 0 unknown, 1, close, 2, open
+currentGrabLevel = 70
 
-
-def log_data(data, filename=filename1, is_header=False):
-    # # If filename is not provided, create one with the current timestamp
-    # if filename is None:
-    #     timestamp = int(time.time())
-    #     filename = f"data_log_{timestamp}.csv"
-
-    # Check if the file exists to determine if we need to write the header
-    # file_exists = os.path.isfile(filename)
-
-    with open(filename, "a") as file:
-        # If the file does not exist and is_header is True, write the header
-        if is_header:
-            header = ",".join(data) + "\n"
-            file.write(header)
-        else:
-            # Write the data
-            line = ",".join(str(item) for item in data) + "\n"
-            file.write(line)
-
-
-def RotateACW(duty):
-    ina1.value(1)
-    ina2.value(0)
-    duty_16 = int((duty * 65536) / 100)
-    print(duty_16)
-    pwma.duty_u16(duty_16)
-
-
-def RotateACCW(duty):
-    ina1.value(0)
-    ina2.value(1)
-    duty_16 = int((duty * 65536) / 100)
-    pwma.duty_u16(duty_16)
-
-
-def RotateBCW(duty):
-    inb1.value(1)
-    inb2.value(0)
-    duty_16 = int((duty * 65536) / 100)
-    pwmb.duty_u16(duty_16)
-
-
-def RotateBCCW(duty):
-    inb1.value(0)
-    inb2.value(1)
-    duty_16 = int((duty * 65536) / 100)
-    pwmb.duty_u16(duty_16)
-
-
-def StopMotor():
-    ina1.value(0)
-    ina2.value(0)
-    pwma.duty_u16(0)
-    inb1.value(0)
-    inb2.value(0)
-    pwmb.duty_u16(0)
-
-
-# motor
-# motor1 = PWM(Pin(10))
-# motor2 = PWM(Pin(11))
-# motor3 = PWM(Pin(12))
-# motor4 = PWM(Pin(13))
-speed = 65534
-speedpct = 100
-
-# voice
-buzzer = PWM(Pin(15))
-Tone = [0, 392, 440, 494, 523, 587, 659, 698, 784]
-
-Song = [
-    Tone[3],
-    Tone[3],
-    Tone[3],
-    Tone[3],
-    Tone[3],
-    Tone[3],
-    Tone[3],
-    Tone[5],
-    Tone[1],
-    Tone[2],
-    Tone[3],
-    Tone[4],
-    Tone[4],
-    Tone[4],
-    Tone[4],
-    Tone[4],
-    Tone[3],
-    Tone[3],
-    Tone[3],
-    Tone[5],
-    Tone[5],
-    Tone[4],
-    Tone[2],
-    Tone[1],
-    Tone[8],
-]
-
-Beat = [1, 1, 2, 1, 1, 2, 1, 1, 1.5, 0.5, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2]
-
-# MQTT
-mqtt_client = 1
-run = False
-
-
-def RGB(R, G, B):
-    if R < 0:
-        R = random.randint(0, 65535)
-    elif R >= 65535:
-        R = 65534
-    if G < 0:
-        G = random.randint(0, 65535)
-    elif G >= 65535:
-        G = 65534
-    if B < 0:
-        B = random.randint(0, 65535)
-    elif B >= 65535:
-        B = 65534
-    # print(R,G,B)
-    Led_R.duty_u16(R)
-    Led_G.duty_u16(G)
-    Led_B.duty_u16(B)
-
-
-def setup():
-    global m
-    m = MotorDriver()
-
-
-def moveForward():
-    m.MotorRunInstant("MA", "forward", speedpct)
-    m.MotorRunInstant("MB", "forward", speedpct)
-    m.MotorRunInstant("MC", "forward", speedpct)
-    m.MotorRunInstant("MD", "forward", speedpct)
-
-
-def moveBackward():
-    m.MotorRunInstant("MA", "backward", speedpct)
-    m.MotorRunInstant("MB", "backward", speedpct)
-    m.MotorRunInstant("MC", "backward", speedpct)
-    m.MotorRunInstant("MD", "backward", speedpct)
-
-
-def moveForwardSpd(speedpct1):
-    m.MotorRunInstant("MA", "forward", speedpct1)
-    m.MotorRunInstant("MB", "forward", speedpct1)
-    m.MotorRunInstant("MC", "forward", speedpct1)
-    m.MotorRunInstant("MD", "forward", speedpct1)
-
-
-def moveBackwardSpd(speedpct1):
-    m.MotorRunInstant("MA", "backward", speedpct1)
-    m.MotorRunInstant("MB", "backward", speedpct1)
-    m.MotorRunInstant("MC", "backward", speedpct1)
-    m.MotorRunInstant("MD", "backward", speedpct1)
-
-
-def stopMove():
-    m.MotorStop("MA")
-    m.MotorStop("MB")
-    m.MotorStop("MC")
-    m.MotorStop("MD")
-
-
-def rotateLeft():
-    m.MotorRunInstant("MA", "backward", speedpct)
-    m.MotorRunInstant("MB", "forward", speedpct)
-    m.MotorRunInstant("MC", "backward", speedpct)
-    m.MotorRunInstant("MD", "forward", speedpct)
-
-
-#     motor(0,speed3,speed4,0)
-#     motor2(0,speed3,speed4,0)
-
-
-def rotateRight():
-    m.MotorRunInstant("MA", "forward", speedpct)
-    m.MotorRunInstant("MB", "backward", speedpct)
-    m.MotorRunInstant("MC", "forward", speedpct)
-    m.MotorRunInstant("MD", "backward", speedpct)
-
-
-def rotateRightSpd(speedpct1):
-    m.MotorRunInstant("MA", "forward", speedpct1)
-    m.MotorRunInstant("MB", "backward", speedpct1)
-    m.MotorRunInstant("MC", "forward", speedpct1)
-    m.MotorRunInstant("MD", "backward", speedpct1)
-
-
-def parallelLeft():
-    m.MotorRunInstant("MA", "forward", speedpct)
-    m.MotorRunInstant("MB", "backward", speedpct)
-    m.MotorRunInstant("MC", "backward", speedpct)
-    m.MotorRunInstant("MD", "forward", speedpct)
-
-
-#     motor(0,speed3,speed4,0)
-#     motor2(0,speed3,speed4,0)
-
-
-def rotateLeftSpd(speedpct1):
-    m.MotorRunInstant("MA", "backward", speedpct1)
-    m.MotorRunInstant("MB", "forward", speedpct1)
-    m.MotorRunInstant("MC", "backward", speedpct1)
-    m.MotorRunInstant("MD", "forward", speedpct1)
-
-
-def parallelRight():
-    m.MotorRunInstant("MA", "backward", speedpct)
-    m.MotorRunInstant("MB", "forward", speedpct)
-    m.MotorRunInstant("MC", "forward", speedpct)
-    m.MotorRunInstant("MD", "backward", speedpct)
-
-
-# def motor(A1, A2, B1, B2):
-#     motor1.duty_u16(A1)
-#     motor2.duty_u16(A2)
-#     motor3.duty_u16(B1)
-#     motor4.duty_u16(B2)
-
-
-def moveSpeed(leftSpeed, rightSpeed):
-    margin = 3000
-    speedpct1 = 75
-    speedpct2 = 75
-    if leftSpeed > rightSpeed + margin:
-        # move to left
-        # m.MotorRunInstant('MA', 'backward', speedpct)
-        m.MotorRunInstant("MB", "forward", speedpct1)
-        # m.MotorRunInstant('MC', 'backward', speedpct)
-        m.MotorRunInstant("MD", "forward", speedpct1)
-    elif leftSpeed < rightSpeed - margin:
-        # move to right
-        m.MotorRunInstant("MA", "forward", speedpct1)
-        # m.MotorRunInstant('MB', 'backward', speedpct)
-        m.MotorRunInstant("MC", "forward", speedpct1)
-        # m.MotorRunInstant('MD', 'backward', speedpct)
-    else:
-        # move straight
-        m.MotorRunInstant("MA", "forward", speedpct2)
-        m.MotorRunInstant("MB", "forward", speedpct2)
-        m.MotorRunInstant("MC", "forward", speedpct2)
-        m.MotorRunInstant("MD", "forward", speedpct2)
-
-
-def moveSpeed2(tz, tx, last_direction):
-    margin = 20
-    z_limit = 220
-    speedpct1 = 25
-    speedpct2 = 25
-    current_direction = last_direction
-    print(f"**last_direction:{last_direction}**")
-    # last_direction 0, move left, 1, move right, 2, straight, 3 stop
-    if tz < z_limit:
-        ratio = tz / z_limit
-        speedpct1 = int(float(speedpct1) * ratio)
-        speedpct2 = int(float(speedpct2) * ratio)
-
-    if tx < -margin and last_direction != 0:
-        # move to left
-        m.MotorStop("MA")
-        m.MotorRunInstant("MB", "forward", speedpct1)
-        m.MotorStop("MC")
-        m.MotorRunInstant("MD", "forward", speedpct1)
-        current_direction = 0
-        print(f"move left ------------{speedpct1}")
-    elif tx > margin and last_direction != 1:
-        # move to right
-        m.MotorRunInstant("MA", "forward", speedpct1)
-        m.MotorStop("MB")
-        m.MotorRunInstant("MC", "forward", speedpct1)
-        m.MotorStop("MD")
-        print(f"{speedpct1} +++++++++++++++  move right")
-        current_direction = 1
-        # m.MotorRunInstant('MD', 'backward', speedpct)
-    elif tx <= margin and tx >= -margin and last_direction != 2:
-        # move straight
-        m.MotorRunInstant("MA", "forward", speedpct2)
-        m.MotorRunInstant("MB", "forward", speedpct2)
-        m.MotorRunInstant("MC", "forward", speedpct2)
-        m.MotorRunInstant("MD", "forward", speedpct2)
-        print(f" =========={speedpct2}===============")
-        current_direction = 2
-    elif tz < z_limit and last_direction != 3:
-        stopMove()
-        current_direction = 3
-    return current_direction
-
-
-def moveContiuously(leftSpeed, rightSpeed):
-    leftpct = int(leftSpeed / speed * 100)
-    rightpct = int(rightSpeed / speed * 100)
-    print(f"drive pct: {leftpct}, {rightpct}")
-    m.MotorRunInstant("MA", "forward", rightpct)
-    m.MotorRunInstant("MB", "forward", leftpct)
-    m.MotorRunInstant("MC", "forward", rightpct)
-    m.MotorRunInstant("MD", "forward", leftpct)
-
-
-def moveParallel(leftSpeed, rightSpeed):
-    margin = 2000
-    speedpct1 = 100
-    speedpct2 = 100
-    if leftSpeed > rightSpeed + margin:
-        # move to parallel left
-        m.MotorRunInstant("MA", "forward", speedpct2)
-        m.MotorRunInstant("MB", "backward", speedpct2)
-        m.MotorRunInstant("MC", "backward", speedpct1)
-        m.MotorRunInstant("MD", "forward", speedpct1)
-    elif leftSpeed < rightSpeed - margin:
-        # move to parallel right
-        m.MotorRunInstant("MA", "backward", speedpct2)
-        m.MotorRunInstant("MB", "forward", speedpct2)
-        m.MotorRunInstant("MC", "forward", speedpct1)
-        m.MotorRunInstant("MD", "backward", speedpct1)
-
-
-def moveRotate(z_dis, x_dis, speedpct1):
-    z_limit = 200
-    # nano margin
-    # margin1=20
-    # mv210 margin
-    margin1 = 10
-    alignment = True
-    if z_dis > z_limit:
-        margin = margin1 * z_dis / z_limit  # 2 cm proportion to z_dis
-    else:
-        margin = margin1
-
-    if x_dis < -margin:
-        # move to rotate left
-        m.MotorRunInstant("MA", "backward", speedpct1)
-        m.MotorRunInstant("MB", "forward", speedpct1)
-        m.MotorRunInstant("MC", "backward", speedpct1)
-        m.MotorRunInstant("MD", "forward", speedpct1)
-        alignment = False
-    elif x_dis > margin:
-        # move to rotate right
-        m.MotorRunInstant("MA", "forward", speedpct1)
-        m.MotorRunInstant("MB", "backward", speedpct1)
-        m.MotorRunInstant("MC", "forward", speedpct1)
-        m.MotorRunInstant("MD", "backward", speedpct1)
-        alignment = False
-    return alignment
-
-
-def armUp(duty_cycle):
-    # arm up
-
-    RotateACW(duty_cycle)
-    sleep(0.1)
-    StopMotor()
-    sleep(0.1)
-
-
-def armDown(duty_cycle):
-    # arm down
-    RotateACCW(duty_cycle)
-    sleep(0.05)
-    StopMotor()
-    sleep(0.2)
-
-
-def moveUpDown(z_dis, y_dis, speedpct1):
-    z_limit = 200
-    # nano margin
-    # margin1=20
-    # mv210 margin
-    margin1 = 30
-    margin2 = 10
-    alignment = True
-    if z_dis > z_limit:
-        marginUp = margin1 * z_dis / z_limit  # 2 cm proportion to z_dis
-        marginDown = margin2 * z_dis / z_limit
-    else:
-        marginUp = margin1
-        marginDown = margin2
-
-    if y_dis < -marginDown:
-        # move up
-        armUp(speedpct1)
-        alignment = False
-        print("move up up up up")
-    elif y_dis > marginUp:
-        # arm down
-        # armDown(speedpct1-30)
-        armDown(speedpct1 - 35)
-        alignment = False
-        print("move down down down")
-    return alignment
-
-
-def closeClaw():
-    #  open claw
-    global grabLastState
-    global grabState
-    global currentGrabLevel
-    global maxGrabLevel
-    global minGrabLevel
-
-    if grabLastState != 2:
-        currentGrabLevel = maxGrabLevel
-
-    else:
-        currentGrabLevel = max(currentGrabLevel - 10, minGrabLevel)
-
-    print(f"open Claw at {currentGrabLevel}")
-
-    RotateBCW(currentGrabLevel)
-    sleep(0.5)
-    StopMotor()
-    sleep(0.2)
-    grabLastState = 2
-
-
-def openClaw():
-    # close claw
-    global grabLastState
-    global grabState
-    global currentGrabLevel
-    global maxGrabLevel
-    global minGrabLevel
-
-    if grabLastState != 1:
-        currentGrabLevel = maxGrabLevel
-
-    else:
-        currentGrabLevel = max(currentGrabLevel - 10, minGrabLevel)
-
-    print(f"close Claw at {currentGrabLevel}")
-    RotateBCCW(currentGrabLevel)
-    sleep(0.5)
-    StopMotor()
-    sleep(0.2)
-    grabLastState = 1
-
-
-def getDistance():
-    trig = Pin(8, Pin.OUT)
-    trig.value(0)
-    utime.sleep_us(2)
-    trig.value(1)
-    utime.sleep_us(20)
-    trig.value(0)
-    echo = Pin(9, Pin.IN)
-    while echo.value() == 0:
-        start = utime.ticks_us()
-    while echo.value() == 1:
-        end = utime.ticks_us()
-    d = (end - start) * 0.0343 / 2
-    # print("d: ", end="")
-    # print(d)
-    return d
-
-
-# def Obstacle_Avoidance():
-#     motor(speed, 0, 0, speed)
-#     utime.sleep(0.2)
-#     motor(0, 0, 0, 0)
-#     utime.sleep(0.5)
-#     distance_left = int(getDistance())
-#     motor(0, speed, speed, 0)
-#     utime.sleep(0.4)
-#     motor(0, 0, 0, 0)
-#     utime.sleep(0.5)
-#     distance_right = int(getDistance())
-#     if distance_left > 20 and distance_right > 20:
-#         if distance_left > distance_right:
-#             motor(speed, 0, 0, speed)
-#             utime.sleep(0.4)
-#         else:
-#             motor(speed, 0, speed, 0)
-#             utime.sleep(0.2)
-#     else:
-#         motor(0, speed, speed, 0)
-#         utime.sleep(0.5)
-
-
-def Advance():
-    distance = getDistance()
-    # if distance < 20:
-    #     # Obstacle_Avoidance()
-    # else:
-    #     # motor(0, speed, 0, speed)
-
-
-# def Dodge():
-#     distance = getDistance()
-#     if distance < 20:
-#         motor(0, speed, speed, 0)
-#         utime.sleep(0.5)
-#         motor(0, 0, 0, 0)
-#     else:
-#         motor(0, speed, 0, speed)
-
-
-def Music():
-    global buzzer
-    for i in range(0, len(Song)):
-        buzzer.duty_u16(2000)
-        buzzer.freq(Song[i])
-        for j in range(1, Beat[i] / 0.1):
-            time.sleep_ms(25)
-        buzzer.duty_u16(0)
-        time.sleep(0.01)
-
-
-def exec_cmd(key_val):
-    global state_value
-    global mode, firstLoop
-    # if (key_val == 0x18):
-    #     #         print("Button ^")
-    #     moveForward()
-    #     # motor(0, speed, 0, speed)  # Go forward
-    # elif (key_val == 0x08):
-    #     #         print("Button <")
-    #     motor(speed, 0, 0, speed)  # Turn left
-    # elif (key_val == 0x5a):
-    #     #         print("Button >")
-    #     motor(0, speed, speed, 0)  # Turn right
-    # elif (key_val == 0x52):
-    #     #         print("Button V")
-    #     motor(speed, 0, speed, 0)  # Go back
-    # elif (key_val == 0x45):
-    #     #         print("Button 1")
-    #     RGB(65534, 65534, 65534)
-    # elif (key_val == 0x46):
-    #     #         print("Button 2")
-    #     Led_R.duty_u16(0)
-    #     Led_G.duty_u16(0)
-    #     Led_B.duty_u16(0)
-    # elif (key_val == 0x47):
-    #     #         print("Button 3")     buzzer
-    #     RGB(0, 0, 0)
-    # elif (key_val == 0x44):
-    #     #         print("Button 4")     buzzer
-    #     print("music")
-    #     buzzer.duty_u16(2000)
-    #     buzzer.freq(587)
-    # elif (key_val == 0x40):
-    #     # print("Button 5")     #buzzer
-    #     # Advance()
-    #     state_value = 2
-    # elif (key_val == 0x43):
-    #     #         print("Button 6")     buzzer
-    #     # Tracking()
-    #     state_value = 3
-    # elif (key_val == 0x07):
-    #     #         print("Button 7")     buzzer
-    #     # Find_light()
-    #     state_value = 4
-    # elif (key_val == 0x15):
-    #     #         print("Button 8")     buzzer
-    #     # Dodge()
-    #     state_value = 5
-    # elif (key_val == 0x09):
-    #     #         print("Button 9")     buzzer
-    #     Music()
-    # elif (key_val == 0x19):
-    #     #         print("Button 0")     buzzer
-    #     #         buzzer.duty_u16(2000)
-    #     #         buzzer.freq(587)
-    #     mode = True
-    #     firstLoop = 0
-    #     print(mode)
-    # elif (key_val == 0x0d):
-    #     #         print("Button 0")     buzzer
-    #     state_value = 0
-    # else:
-    #     motor(0, 0, 0, 0)  # Stop
-    #     buzzer.duty_u16(0)
-
-
-#         print("STOP")
-
-
-# WIFI 连接函数
-wifi_wait_time = 0
-
-
-def do_connect():
-    import network
-
-    global wifi_wait_time
-    sta_if = network.WLAN(network.STA_IF)
-    if not sta_if.isconnected():
-        try:
-            print("connecting to network...")
-            sta_if.active(True)
-            sta_if.connect(wifiName, wifiPassword)
-            while not sta_if.isconnected():
-                utime.sleep(1)
-                wifi_wait_time += 1
-                if wifi_wait_time >= 10:
-                    raise Exception("timeout")
-        except Exception as e:
-            print("Connection error:", e)
-            RGB(65534, 65534, 0)
-            while True:
-                pass
-    print("connect  WiFi ok")
-    print(sta_if.ifconfig())
-
-
-# 接收消息，并处理
-def MsgOK(topic, msg):  # 回调函数，用于收到消息
-    print((topic, msg))  # 打印主题值和消息值
-    global state_value
-    global speed
-    global mqtt_client
-    global mode, firstLoop
-    if topic == myTopic.encode():  # 判断是不是发给myTopic的消息
-        if msg == b"down":
-            moveBackward()
-            # motor(speed, 0, speed, 0)
-            utime.sleep(0.2)
-            state_value = 0
-            stopMove()
-            # motor(0, 0, 0, 0)
-        elif msg == b"up":
-            moveForward()
-            # motor(0, speed, 0, speed)
-            utime.sleep(0.2)
-            state_value = 0
-            stopMove()
-            # motor(0, 0, 0, 0)
-        elif msg == b"left":
-            # motor(speed, 0, 0, speed)
-            rotateLeft()
-            utime.sleep(0.2)
-            state_value = 0
-            stopMove()
-            # motor(0, 0, 0, 0)
-        elif msg == b"right":
-            # motor(0, speed, speed, 0)
-            rotateRight()
-            utime.sleep(0.2)
-            state_value = 0
-            stopMove()
-            # motor(0, 0, 0, 0)
-        elif msg == b"stop":
-            state_value = 0
-            stopMove()
-            # motor(0, 0, 0, 0)
-        elif msg == b"turnon":
-            RGB(65534, 65534, 65534)
-            mqtt_client.publish("Car Light", "see light")
-        elif msg == b"turnoff":
-            RGB(0, 0, 0)
-            mqtt_client.publish("Car Light", "close light")
-        elif msg == b"random":
-            print("run random")
-            RGB(-1, -1, -1)
-        elif msg == b"advance":
-            print("run advance")
-            state_value = 2
-            # Advance()
-        elif msg == b"tracking":
-            print("run tracking")
-            state_value = 3
-            # Tracking()
-        elif msg == b"find light":
-            print("run find light")
-            state_value = 4
-            # Find_light()
-        elif msg == b"dodge":
-            print("run dodge")
-            state_value = 5
-            # Dodge()
-        elif msg == b"music":
-            print("run dodge")
-            state_value = 6
-            # Dodge()
-        elif msg == b"iRemote":
-            mode = False
-            firstLoop = 0
-            # Dodge()
-        else:
-            print(msg.decode())
-
-
-def connect_and_subscribe():
-    client = MQTTClient(client_id=clientID, server=serverIP, port=port, keepalive=6000)
-    client.set_callback(MsgOK)
-    client.connect()
-    client.subscribe(myTopic)
-    print("Connected to %s" % serverIP)
-    return client
-
-
-def restart_and_reconnect():
-    print("Failed to connect to MQTT broker. Reconnecting...")
-    time.sleep(10)
-    machine.reset()
-
-
-def connect_show_params(request):
-    global mqtt_client
-    global run
-    global serverIP
-    global port
-    global machineId
-    """ request handler """
-    params = utils.get_request_query_params(request)
-    print(params)
-    ips = params["mqtt_ip"].split(":")
-    serverIP = ips[0]
-    port = ips[1]
-    """ will return {"param_one": "one", "param_two": "two"} """
-    server.send("HTTP/1.0 200 OK\r\n")
-    server.send("Content-Type: text/html\r\n\r\n")
-    if machineId != params["machineid"]:
-        return server.send("Not this car")
-    if run == True:
-        return server.send("mqtt is connected!")
-    try:
-        mqtt_client = connect_and_subscribe()
-        server.send("ok")
-        run = True
-    except OSError as e:
-        server.send("failed")
-
-
-def stop_show_params(request):
-    global mqtt_client
-    global run
-    global machineId
-    """ request handler """
-    params = utils.get_request_query_params(request)
-    print(params)
-    server.send("HTTP/1.0 200 OK\r\n")
-    server.send("Content-Type: text/html\r\n\r\n")
-    if machineId != params["machineid"]:
-        return server.send("Not this car")
-    if run != True:
-        return server.send("No mqtt connected!")
-    try:
-        mqtt_client.disconnect()
-        server.send("ok")
-        run = False
-    except OSError as e:
-        server.send("failed")
-
-
-def status_show_params(request):
-    global run
-    global serverIP
-    global port
-    global machineId
-    """ request handler """
-    params = utils.get_request_query_params(request)
-    print(params)
-
-    if machineId != params["machineid"]:
-        server.send("HTTP/1.0 200 OK\r\n")
-        server.send("Content-Type: text/html\r\n\r\n")
-        return server.send("Not this car")
-    json_str = json.dumps({"run": run, "mqtt_ip": "{}:{}".format(serverIP, port)})
-    server.send("HTTP/1.0 200 OK\r\n")
-    server.send("Content-Type: application/json\r\n\r\n")
-    server.send(json_str)
-
-
-server = MicroPyServer()
-""" add route """
-server.add_route("/connect", connect_show_params)
-server.add_route("/stop", stop_show_params)
-server.add_route("/status", status_show_params)
+# # ----------------- functions -----------------
 
 
 def parse_data(data):
@@ -867,77 +67,150 @@ def parse_data(data):
     return values_list
 
 
-# 初始化小车状态
+def RotateBCCW(duty):
+    inb1.value(0)
+    inb2.value(1)
+    duty_16 = int((duty * 65536) / 100)
+    pwmb.duty_u16(duty_16)
 
-# motor(0, 0, 0, 0)
-setup()
-stopMove()
-buzzer.duty_u16(0)
-mode = "uart"
-firstLoop = 0
-wifi_connect = False
-state_value = 0
-# 初始化UART
-uart = UART(1, baudrate=115200, tx=Pin(4), rx=Pin(5))
-uart2 = UART(0, baudrate=115200, tx=Pin(12), rx=Pin(13))
 
-RGB(65534, 65534, 65534)
-xunzhao = 0  # 初始化搜索变量
-xunzhao1 = 0  # 初始化另一个搜索变量
-utime.sleep(1)  # 等待1秒
-count = 0  # 初始化计数器
-count2 = 0  # 初始化另一个计数器
-count_limit = 10  # 设置计数器的限制为10
-count_start = 3  # 设置计数器的起始值为3
-startRunct = 6  # 初始化startRunct变量
-maxSpeed = 65000  # 设置最大速度为65000
-last_z = 999  # 初始化last_z变量
-last_x = 999  # 初始化last_x变量
-last_y = 999  # 初始化last_y变量
-x_dis = 999
-y_dis = 999
-z_dis = 999
-start_fine_ct = 6  # 初始化start_fine_ct变量
-x_max = 200  # 设置x的最大值为200
-z_max = 200  # 设置z的最大值为200
-y_max = 200  # 设置y的最大值为200
-almost_there_ct = 0  # 初始化almost_there_ct变量
-come_in_step = 4  # 设置come_in_step变量为4
-got_there = False  # 初始化got_there变量为False
-grabbed = True  # 初始化grabbed变量为True
-grab_limit = 3  # 设置grab_limit变量为3
-grab_ct = 0  # 初始化grab_ct变量
-release_wait_ct = 0  # 初始化release_wait_ct变量
-release_num = 50  # 设置release_num变量为50
-z_limit = 200  # 设置z的限制为200
-z_close_limit = 200  # 设置z_close的限制为200
+def RotateBCW(duty):
+    inb1.value(1)
+    inb2.value(0)
+    duty_16 = int((duty * 65536) / 100)
+    pwmb.duty_u16(duty_16)
 
-grab_id = 1  # 设置grab_id为1
-received_id = 0  # 初始化received_id变量
-received_id2 = 0  # 初始化received_id2变量
-zoomfactor = 40  # 设置zoomfactor为40
-z_target = 220  # 设置z_target为220
-z_grab_target = 220  # 设置z_grab_target为220
-z_range = 10  # 设置z_range为10
-# log_data(["time", "supplyVoltage", "voltageAtADC"], is_header=True)  # 记录数据
-last_direction = 3  # 设置last_direction为3
-grabbed_found = False  # 初始化grabbed_found变量为False
-got_grabbed_area = False  # 初始化got_grabbed_area变量为False
-rotateRight_ct = 0  # 初始化rotateRight_ct变量
-rotateRight_limit = 15  # 设置rotateRight_limit为15
 
-received_id1 = "N/A"
-action_count = 9
+def RotateACW(duty):
+    ina1.value(1)
+    ina2.value(0)
+    duty_16 = int((duty * 65536) / 100)
+    print(duty_16)
+    pwma.duty_u16(duty_16)
 
-target_id = 21  # 设置目标ID为30
-second_target_id = 32
-current_target_id = target_id
-is_finished = False
-same_count = 0
 
-target_id_list = [21, 32, 21, 11]
-target_action_list = ["locate", "grab", "locate", "finish"]
-target_index = 0
+def RotateACCW(duty):
+    ina1.value(0)
+    ina2.value(1)
+    duty_16 = int((duty * 65536) / 100)
+    pwma.duty_u16(duty_16)
+
+
+def StopMotor():
+    ina1.value(0)
+    ina2.value(0)
+    pwma.duty_u16(0)
+    inb1.value(0)
+    inb2.value(0)
+    pwmb.duty_u16(0)
+
+
+def openClaw():
+    global grabLastState
+    global grabState
+    global currentGrabLevel
+    global maxGrabLevel
+    global minGrabLevel
+
+    if grabLastState != 1:
+        currentGrabLevel = maxGrabLevel
+
+    else:
+        currentGrabLevel = max(currentGrabLevel - 10, minGrabLevel)
+
+    print(f"close Claw at {currentGrabLevel}")
+    RotateBCCW(currentGrabLevel)
+    sleep(0.5)
+    StopMotor()
+    sleep(0.2)
+    grabLastState = 1
+
+
+def closeClaw():
+    global grabLastState
+    global grabState
+    global currentGrabLevel
+    global maxGrabLevel
+    global minGrabLevel
+
+    if grabLastState != 2:
+        currentGrabLevel = maxGrabLevel
+
+    else:
+        currentGrabLevel = max(currentGrabLevel - 10, minGrabLevel)
+
+    print(f"open Claw at {currentGrabLevel}")
+
+    RotateBCW(currentGrabLevel)
+    sleep(0.5)
+    StopMotor()
+    sleep(0.2)
+    grabLastState = 2
+
+
+def moveForwardSpd(speedpct1):
+    m.MotorRunInstant("MA", "forward", speedpct1)
+    m.MotorRunInstant("MB", "forward", speedpct1)
+    m.MotorRunInstant("MC", "forward", speedpct1)
+    m.MotorRunInstant("MD", "forward", speedpct1)
+
+
+def moveBackwardSpd(speedpct1):
+    m.MotorRunInstant("MA", "backward", speedpct1)
+    m.MotorRunInstant("MB", "backward", speedpct1)
+    m.MotorRunInstant("MC", "backward", speedpct1)
+    m.MotorRunInstant("MD", "backward", speedpct1)
+
+
+def rotateLeftSpd(speedpct1):
+    m.MotorRunInstant("MA", "backward", speedpct1)
+    m.MotorRunInstant("MB", "forward", speedpct1)
+    m.MotorRunInstant("MC", "backward", speedpct1)
+    m.MotorRunInstant("MD", "forward", speedpct1)
+
+
+def rotateRightSpd(speedpct1):
+    m.MotorRunInstant("MA", "forward", speedpct1)
+    m.MotorRunInstant("MB", "backward", speedpct1)
+    m.MotorRunInstant("MC", "forward", speedpct1)
+    m.MotorRunInstant("MD", "backward", speedpct1)
+
+
+def stopMove():
+    m.MotorStop("MA")
+    m.MotorStop("MB")
+    m.MotorStop("MC")
+    m.MotorStop("MD")
+
+
+def parallelLeft(speedpct):
+    m.MotorRunInstant("MA", "forward", speedpct)
+    m.MotorRunInstant("MB", "backward", speedpct)
+    m.MotorRunInstant("MC", "backward", speedpct)
+    m.MotorRunInstant("MD", "forward", speedpct)
+
+
+def parallelRight(speedpct):
+    m.MotorRunInstant("MA", "backward", speedpct)
+    m.MotorRunInstant("MB", "forward", speedpct)
+    m.MotorRunInstant("MC", "forward", speedpct)
+    m.MotorRunInstant("MD", "backward", speedpct)
+
+
+def armUp(duty_cycle):
+    # arm up
+    RotateACW(duty_cycle)
+    sleep(0.1)
+    StopMotor()
+    sleep(0.1)
+
+
+def armDown(duty_cycle):
+    # arm down
+    RotateACCW(duty_cycle)
+    sleep(0.05)
+    StopMotor()
+    sleep(0.2)
 
 
 def keepForward(sp):
@@ -970,166 +243,460 @@ def keepBackward(sp):
     stopMove()
 
 
-# 是否和上次的x,y,z相同
-def isSameXYZ(x, y, z):
-    global last_x
-    global last_y
-    global last_z
-    if x == last_x and y == last_y and z == last_z:
-        return True
+# # ----------------- adjustable parameters -----------------
+"""
+action status: 
+
+- locate: locate the object by the big tag.
+- grab: grab the object by tag
+- finish: finish the task
+- grab-by-color: grab the object of the specific color
+- put-down: put down the object
+- grab-by-kpu: grab the object by kpu
+"""
+target_action = [
+    # {"mode": "find_apriltags", "id": 18, "action": "locate"},
+    {"mode": "find_apriltags", "id": 20, "action": "locate"},
+    # {"mode": "kpu", "id": "", "action": "grab-by-kpu"},
+    # {"mode": "find_blobs", "id": "", "action": "grab-by-color"},
+    # {"mode": "find_apriltags", "id": 86, "action": "put-down"},
+    # {"mode": "kpu", "id": "", "action": "grab-by-kpu"},
+    # {"mode": "find_apriltags", "id": 88, "action": "put-down"},
+    {"mode": "kpu", "id": "", "action": "locate-by-kpu"},
+    {"mode": "find_apriltags", "id": 1, "action": "grab-by-kpu-apriltags"},
+    {"mode": "find_apriltags", "id": 88, "action": "put-down"},
+    {"mode": "find_apriltags", "id": "", "action": "finished"},
+]
+
+big_tag_id_list = [
+    18,
+    20,
+]
+small_tag_id_list = [86, 88]
+
+small_tag_zoomfactor = 2.53
+big_tag_zoomfactor = 11.33
+kpu_tag_zf = 1.42
+duck_width_zoomfactor_qqvga = 797.5
+duck_height_zoomfactor_qqvga = 638
+
+
+target_img_mode = []
+for action in target_action:
+    target_img_mode.append(action["mode"])
+
+target_id_list = []
+for action in target_action:
+    target_id_list.append(action["id"])
+
+target_action_list = []
+for action in target_action:
+    target_action_list.append(action["action"])
+
+
+target_index = 0
+
+claw_open_len = 13.5  # cm
+claw_close_len = 14
+
+test_mode = False
+k210_cam_offset = 85 - 160 / 2  # 相机安装在机械臂上的偏移量
+
+claw_range = (90 - 75) / 2
+k210_qqvga = (120, 160)
+k210_qvga = (240, 320)
+current_resolution = k210_qqvga
+k210_center = current_resolution[1] / 2 + k210_cam_offset  # QQVGA分辨率：120*160
+k210_y_center = current_resolution[0] / 2
+
+arm_range = 15  # pixel 上下浮动范围
+rotate_in_front_of_obj = 2  # cm 在物体前方允许旋转的距离
+locate_stop_dis = 48  # cm
+arm_up_speed = 45
+arm_down_speed = 10
+
+
+def get_zf(id):
+    if id in big_tag_id_list:
+        return big_tag_zoomfactor
     else:
-        return False
+        return small_tag_zoomfactor
 
 
-speed_floor = 30  # 地板上的速度
-speed_floor_rotate = 30  # 地板上的转向速度
+claw_grab_len = 11
+claw_arm_up_len = 25  # 大于这个高度，需要抬起机械臂
+grab_mode = False
+grab_attempted = False
+grab_attempted_get_count = 0
+grab_attempted_all_count = 0
+put_down_obj = False
+arm_up_len = 2
+search_count = 0
+discovered_obj = False
+# # ----------------- the life cycle of a job -----------------
 
-openClaw()
-openClaw()
-openClaw()
-openClaw()
-openClaw()
-openClaw()
-openClaw()
-openClaw()
-openClaw()
-openClaw()
-while True:
-    RGB(0, 0, 0)
 
-    count += 1
+# ## main
+for _ in range(10):
+    armDown(arm_down_speed)
 
-    try:
-        if uart2.any():
-            data = uart2.read().decode("utf-8").strip()  # 读取一个字节
+for _ in range(8):
+    openClaw()
 
-            indx = 0
-            indx2 = 0
-            try:
-                print("data", data)
-                parsed_values_list = parse_data(data)
-                length1 = len(parsed_values_list)
-                if length1 > 0:
-                    for i in range(length1):  # 遍历长度为length1的序列
-                        # 假设第一个值是目标id
-                        received_id1 = int(
-                            parsed_values_list[i].get("id", "N/A")
-                        )  # 从列表中获取id，如果没有则返回'N/A'，并将结果转换为整数
-                        print(f"received id1:{received_id1}")
-                        print(f"current_target_id:{target_id_list[target_index]}")
-                        print(
-                            f"current_target_action:{target_action_list[target_index]}"
-                        )
-                        if (
-                            received_id1 == target_id_list[target_index]
-                        ):  # 如果接收到的id等于目标id
-                            indx = i  # 记录当前的索引
-                            received_id = received_id1  # 更新接收到的id
-                            print(f"received id:{received_id}")  # 打印接收到的id
-                            z_dis = int(
-                                -zoomfactor
-                                * float(parsed_values_list[indx].get("Tz", "N/A"))
-                            )  # 计算z方向的距离
-                            x_dis = int(
-                                zoomfactor
-                                * float(parsed_values_list[indx].get("Tx", "N/A"))
-                            )  # 计算x方向的距离
-                            y_dis = int(
-                                -zoomfactor
-                                * float(parsed_values_list[indx].get("Ty", "N/A"))
-                            )  # 计算y方向的距离
-                            print(f"x={x_dis},y={y_dis},z={z_dis}")  # 打印x, y, z方向的距离
 
-                            # 思路：
-                            """
-                            如果当前的方向不是正中间，则调整方向。调整完方向然后直行。
-                            """
+def close_to_obj_action(cx, cy, claw_range_level=1.5):
+    if cy < k210_y_center - arm_range:
+        print("view is low, arm up")
+        armUp(arm_up_speed)
+        sleep(0.3)
+    elif cy > k210_y_center + arm_range:
+        print("view is high, arm down")
+        armDown(arm_down_speed)
+        sleep(0.3)
+    elif cx > k210_center + claw_range_level * claw_range:
+        print("right")
+        keepTurnRight(45)
+    # 如果cx小于k210_center - claw_range，说明物体在左边，左转
+    elif cx < k210_center - claw_range_level * claw_range:
+        print("left")
+        keepTurnLeft(45)
+    else:
+        print("forward")
+        keepForward(45)
+        sleep(0.1)
 
-                            if z_dis >= 800:
-                                keepForward(speed_floor)
-                                print("go forward")
-                            elif 800 > z_dis > 250:
-                                if -35 > x_dis:
-                                    keepTurnLeft(speed_floor_rotate)
-                                    print("turn left")
-                                elif 80 < x_dis:
-                                    keepTurnRight(speed_floor_rotate)
-                                    print("turn right")
-                                else:
-                                    keepForward(speed_floor)
-                                    print("go forward")
-                            elif z_dis <= 250 and last_z <= 250:
-                                if target_action_list[target_index] == "locate":
-                                    target_index += 1
-                                    print(
-                                        f"change to target_id:{target_id_list[target_index]}"
-                                    )
-                                    stopMove()
-                                elif target_action_list[target_index] == "finish":
-                                    is_finished = True
-                                    stopMove()
-                                    print("car stopped")
-                                    break
-                                elif target_action_list[target_index] == "grab":
-                                    if x_dis < 38:
-                                        keepTurnLeft(speed_floor_rotate)
-                                        print("turn left")
-                                        utime.sleep(0.3)
-                                    elif x_dis > 48:
-                                        keepTurnRight(speed_floor_rotate)
-                                        print("turn right")
-                                        utime.sleep(0.3)
-                                    elif 38 <= x_dis <= 48:
-                                        stopMove()
-                                        print("car got there")
-                                        keepForward(speed_floor)
-                                        keepForward(speed_floor)
-                                        keepForward(speed_floor)
-                                        keepForward(speed_floor)
-                                        keepForward(speed_floor)
-                                        keepForward(speed_floor)
-                                        keepForward(speed_floor)
-                                        keepForward(speed_floor)
 
-                                        closeClaw()
-                                        closeClaw()
-                                        closeClaw()
-                                        closeClaw()
-                                        closeClaw()
-                                        closeClaw()
+def get_locate_action(tag_x, tag_y, tag_z):
+    global target_index
+    obj_dis = tag_z
+    print(f"tag_x: {tag_x}, tag_y: {tag_y}, tag_z: {tag_z}")
+    print(f"obj_dis: {obj_dis}")
+    if obj_dis > locate_stop_dis:
+        close_to_obj_action(tag_x, tag_y)
+    else:
+        for _ in range(16):
+            armDown(arm_down_speed)
+            sleep(0.1)
 
-                                        keepBackward(speed_floor)
-                                        keepBackward(speed_floor)
-                                        keepBackward(speed_floor)
+        print("have located the object")
+        next_target()
 
-                                        target_index += 1
-                                        print(
-                                            f"change to target_id:{target_id_list[target_index]}"
-                                        )
-                                        print(
-                                            f"change action to {target_action_list[target_index]}"
-                                        )
-                                    else:
-                                        print("error")
 
-            except Exception as e:
-                print("Error parsing data:", e)
+def put_down_transition():
+    for _ in range(10):
+        keepBackward(30)
 
-                # print("car stopped")
-        if isSameXYZ(x_dis, y_dis, z_dis):
-            same_count += 1
+    for _ in range(16):
+        armDown(arm_down_speed)
+        sleep(0.3)
+
+    for _ in range(4):
+        closeClaw()
+
+
+def grab_transition():
+    for _ in range(12):
+        armUp(arm_up_speed)
+    for _ in range(4):
+        keepBackward(30)
+
+
+def put_down_action(tag_x, tag_y, tag_z):
+    global put_down_obj
+    global target_index
+    if tag_z > 1.2 * (claw_close_len + arm_up_len):
+        close_to_obj_action(tag_x, tag_y)
+    else:
+        for _ in range(3):
+            armUp(arm_up_speed)
+            sleep(0.3)
+
+        for _ in range(4):
+            openClaw()
+
+        put_down_transition()
+
+        next_target()
+
+
+def kpu_locate_action(x, y, w, h):
+    global grab_mode
+    global target_index
+    cx = x + w / 2
+    cy = y + h / 2
+    dis_w = duck_width_zoomfactor_qqvga / w
+    dis_h = duck_height_zoomfactor_qqvga / h
+    print(f"dis_h: {dis_h}")
+    print(f"dis_w: {dis_w}")
+    obj_dis = max(dis_w, dis_h)
+    print(f"obj_dis: {obj_dis}")
+    if obj_dis > rotate_in_front_of_obj + claw_open_len:
+        close_to_obj_action(cx, cy, claw_range_level=1.5)
+    else:
+        for _ in range(6):
+            armDown(arm_down_speed)
+        next_target()
+
+
+def get_kpu_tag_action(tag_x, tag_y, tag_z):
+    print(f"tag_x: {tag_x}, tag_y: {tag_y}, tag_z: {tag_z}")
+    global grab_mode
+    global is_grabbed
+    global target_index
+    if tag_x > k210_center + claw_range:
+        print("right")
+        keepTurnRight(30)
+    elif tag_x < k210_center - claw_range:
+        print("left")
+        keepTurnLeft(30)
+    else:
+        print("grab mode")
+        grab_mode = True
+
+        for _ in range(4):
+            armUp(25)
+
+
+
+def grab_by_kpu(cx, cy, dis):
+    global grab_mode
+    global is_grabbed
+    if dis > (rotate_in_front_of_obj + claw_open_len):
+        close_to_obj_action(cx, cy, claw_range_level=1.5)
+    else:
+        if cy < k210_y_center:
+            armUp(arm_up_speed)
         else:
-            same_count = 0
-        if same_count > 30:
-            # 转向多次确认是否需要转向
-            keepTurnRight(30)
-            utime.sleep(0.3)
-            print("is same xyz")
-            same_count = 0
-        last_x = x_dis
-        last_y = y_dis
-        last_z = z_dis
-        if is_finished:
-            break
+            grab_mode = True
+
+
+def grab_mode_in_kpu():
+    global grab_forward_count
+    for _ in range(1):
+        keepBackward(30)
+    for _ in range(10):
+        armUp(25)
+    for _ in range(grab_forward_count):
+        keepForward(25)
+    for _ in range(12):
+        closeClaw()
+
+    for _ in range(6):
+        armUp(arm_up_speed)
+
+    for _ in range(2 * (grab_forward_count - 1)):
+        keepBackward(25)
+
+    for _ in range(14):
+        armDown(arm_down_speed)
+
+
+def grab_mode_in_color():
+    global grab_forward_count
+    for _ in range(1):
+        keepBackward(30)
+    # for _ in range(10):
+    #     armUp(25)
+    for _ in range(grab_forward_count):
+        keepForward(25)
+    for _ in range(12):
+        closeClaw()
+
+    for _ in range(6):
+        armUp(arm_up_speed)
+
+    for _ in range(2 * (grab_forward_count - 1)):
+        keepBackward(25)
+
+    for _ in range(14):
+        armDown(arm_down_speed)
+
+
+def grab_by_color(cx, cy, dis):
+    global grab_mode
+    global is_grabbed
+    if dis > (rotate_in_front_of_obj + claw_open_len) and not grab_mode:
+        close_to_obj_action(cx, cy, claw_range_level=1.5)
+    else:
+        grab_mode = True
+        if cy > claw_arm_up_len:
+            armUp(25)
+            sleep(1)
+            print("arm up, and h is: ", cy)
+        else:
+            keepForward(25)
+
+
+def get_json(uart_data):
+    try:
+        uart_read = uart_data.read()
+        uart_data = uart_read.decode("utf-8")
+        # find { and } first appear position, then cut the string
+        if "{" in uart_data and "}" in uart_data:
+            uart_data = uart_data[uart_data.index("{") : uart_data.index("}") + 1]
+            return json.loads(uart_data)
+        else:
+            return {}
     except Exception as e:
-        print("Error data:", e)
+        print("get json error, original data: ", e, uart_read)
+        return {}
+
+
+def discovered_obj_action():
+    global search_count
+    print("current search count: {}".format(search_count))
+    if search_count < 10:
+        keepTurnRight(45)
+        search_count += 1
+    elif 10 <= search_count < 20:
+        keepTurnLeft(45)
+        search_count += 1
+    else:
+        keepTurnRight(45)
+    sleep(0.3)
+
+
+def get_search_count(cx, resolution_x):
+    resolution_x_unit = resolution_x / 20
+    sc = int(cx / resolution_x_unit)
+    if sc < 10:
+        return 20 - sc
+    else:
+        return sc - 10
+
+
+def next_target():
+    global target_index
+    global discovered_obj
+    target_index += 1
+    discovered_obj = False
+
+
+grab_forward_count = 8
+grab_forward_count_origin = 8
+wait_ct = 0
+wait_ct_limit = 10
+# 核心逻辑
+while is_finished is False and not test_mode:
+    if not uart2.any():
+        continue
+    if target_index < len(target_action_list):
+        print(f"current target action is: {target_action_list[target_index]}")
+    else:
+        print("target action list is empty")
+        break
+
+    data = get_json(uart2)
+
+    print(f"current data: {data}")
+
+    k210_img_mode = data.get("img_mode", "N/A")
+    find_tag_id = data.get("find_tag_id", None)
+
+    tag_status = "none"
+    obj_status = "none"
+    if target_action[target_index]["id"] != "":
+        tag_id = int(data.get("TagId", "999"))
+        tag_status = data.get("TagStatus", "none")
+        zoomfactor = get_zf(tag_id)
+        tag_z = int(-zoomfactor * float(data.get("TagTz", "999")))
+        tag_x = int(zoomfactor * float(data.get("TagTx", "999")))
+        tag_y = int(-zoomfactor * float(data.get("TagTy", "999")))
+        tag_cx = int(data.get("TagCx", "999"))
+        tag_cy = int(data.get("TagCy", "999"))
+    else:
+        obj_w = data.get("ObjectWidth", 0)
+        obj_h = data.get("ObjectHeight", 0)
+        obj_x = data.get("ObjectX", 0)
+        obj_y = data.get("ObjectY", 0)
+        obj_status = data.get("ObjectStatus", "none")
+
+    if k210_img_mode != target_img_mode[target_index]:
+        uart_write_dict = {"img_mode": target_img_mode[target_index]}
+        uart2.write(json.dumps(uart_write_dict) + "\n")
+
+    # if target_img_mode[target_index] == "find-apriltags" and find_tag_id != target_id_list[target_index]:
+    #     uart_write_dict = {"find_tag_id": target_id_list[target_index]}
+    #     uart2.write(json.dumps(uart_write_dict) + "\n")
+    if tag_status is "get":
+        search_count = get_search_count(tag_cx, current_resolution[1])
+        discovered_obj = True
+    elif obj_status is "get":
+        search_count = get_search_count(obj_x, current_resolution[1])
+        discovered_obj = True
+
+    if target_action_list[target_index] == "finished":
+        is_finished = True
+        break
+    elif grab_mode and obj_status != "get":
+        if target_action_list[target_index] in ["grab-by-kpu", "grab-by-kpu-apriltags"]:
+            grab_mode_in_kpu()
+        elif target_action_list[target_index] == "grab-by-color":
+            grab_mode_in_color()
+
+        # grab_transition()
+
+        grab_mode = False
+        grab_attempted = True
+        obj_status = "none"
+        sleep(2)
+
+    elif grab_attempted:
+        if data == {}:
+            continue
+        print(
+            "all count:{}, get count:{}".format(
+                grab_attempted_all_count, grab_attempted_get_count
+            )
+        )
+        if obj_status == "get":
+            grab_attempted_get_count += 1
+            grab_attempted_all_count += 1
+        elif obj_status == "none":
+            grab_attempted_all_count += 1
+        if grab_attempted_all_count > 10:
+            if grab_attempted_get_count >= 3:
+                grab_forward_count += 1
+                grab_mode = False
+                grab_attempted = False
+                grab_attempted_get_count = 0
+                grab_attempted_all_count = 0
+                for _ in range(10):
+                    openClaw()
+            else:
+                grab_transition()
+                grab_forward_count = grab_forward_count_origin
+                grab_attempted = False
+                next_target()
+
+    elif (tag_status == "none" and obj_status == "none") or (
+        tag_status == "get" and tag_id != target_id_list[target_index]
+    ):
+        if discovered_obj:
+            # discovered_obj_action()
+            print(f"wait ct={wait_ct}")
+            wait_ct += 1
+            if wait_ct >= wait_ct_limit:
+                discovered_obj = False
+                wait_ct = 0
+        else:
+            keepTurnRight(30)
+            sleep(0.3)
+    elif target_action_list[target_index] == "put-down":
+        if tag_id == target_id_list[target_index]:
+            put_down_action(tag_cx, tag_cy, tag_z)
+    elif target_action_list[target_index] == "grab-by-kpu":
+        print("obj_w: ", obj_w)
+        obj_dis = duck_width_zoomfactor_qqvga / obj_w
+        grab_by_kpu(obj_x, obj_y, obj_dis)
+    elif target_action_list[target_index] == "grab-by-color":
+        print("obj_w: ", obj_w)
+        obj_dis = duck_width_zoomfactor_qqvga / obj_w
+        grab_by_color(obj_x, obj_y, obj_dis)
+    elif target_action_list[target_index] == "locate":
+        if tag_id == target_id_list[target_index]:
+            get_locate_action(tag_cx, tag_cy, tag_z)
+    elif target_action_list[target_index] == "grab-by-kpu-apriltags":
+        get_kpu_tag_action(tag_cx, tag_cy, tag_z)
+    elif target_action_list[target_index] == "locate-by-kpu":
+        kpu_locate_action(obj_x, obj_y, obj_w, obj_h)
