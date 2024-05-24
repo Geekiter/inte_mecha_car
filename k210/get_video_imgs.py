@@ -16,7 +16,7 @@ sensor.set_pixformat(sensor.RGB565)  # 设置摄像头输出格式为 RGB565
 sensor.set_framesize(sensor.QVGA)  # 设置摄像头输出大小为 QVGA (320x240)
 # sensor.set_auto_gain(False)  # 必须关闭此功能，以防止图像冲洗…
 # sensor.set_auto_whitebal(False)  # 必须关闭此功能，以防止图像冲洗…
-sensor.set_hmirror(1)  # 设置摄像头水平镜像
+#sensor.set_hmirror(1)  # 设置摄像头水平镜像
 sensor.set_vflip(1)  # 设置摄像头垂直翻转
 
 # sensor.set_windowing((160, 120))
